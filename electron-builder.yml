@@ -1,0 +1,82 @@
+appId: com.stockflow.desktop
+productName: StockFlow
+copyright: StockFlow
+
+directories:
+  buildResources: build
+  output: dist
+
+# electron-vite emits everything the app needs into out/. There are no native modules
+# and nothing resolves assets from disk at runtime, so nothing has to travel as real
+# node_modules — which is why this installer is a fraction of LeadFlow's size.
+files:
+  - out/**
+  - resources/**
+  - package.json
+  - '!**/*.map'
+  - '!**/{.eslintrc,.editorconfig,.prettierrc,tsconfig*.json}'
+  - '!**/{test,tests,__tests__,example,examples,docs,doc}'
+  - '!**/*.{md,markdown,ts,tsx,flow,coffee}'
+
+asar: true
+
+extraMetadata:
+  main: out/main/index.js
+
+mac:
+  category: public.app-category.business
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+  icon: build/icon.png
+  darkModeSupport: true
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  extendInfo:
+    LSMinimumSystemVersion: '11.0'
+
+dmg:
+  artifactName: ${productName}-${version}-${arch}.${ext}
+  contents:
+    - x: 140
+      y: 200
+    - x: 400
+      y: 200
+      type: link
+      path: /Applications
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+  icon: build/icon.png
+  artifactName: ${productName}-${version}-Setup.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: StockFlow
+  deleteAppDataOnUninstall: false
+
+portable:
+  artifactName: ${productName}-${version}-Portable.${ext}
+
+linux:
+  target:
+    - AppImage
+    - deb
+  icon: build/icon.png
+  category: Office
+  maintainer: StockFlow
+
+publish: null
+npmRebuild: false
