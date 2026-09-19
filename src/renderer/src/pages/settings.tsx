@@ -70,7 +70,7 @@ export function SettingsPage(): React.JSX.Element {
               id="company"
               defaultValue={settings.companyName ?? ''}
               onBlur={(e) => e.target.value !== (settings.companyName ?? '') && set('companyName', e.target.value || null)}
-              placeholder="Shree Hari Industries"
+              placeholder="Your company name"
             />
             <p className="text-[11px] text-muted-foreground">Appears on every printed report.</p>
           </div>

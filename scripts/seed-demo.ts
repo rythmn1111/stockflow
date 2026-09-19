@@ -17,7 +17,7 @@ if (!userData) throw new Error('usage: seed-demo <userDataPath>')
 openDatabase(userData)
 
 settingsRepo.update({
-  companyName: 'Shree Hari Industries',
+  companyName: 'Demo Manufacturing Co.',
   defaultUnit: 'Nos.',
   onboardingCompletedAt: Date.now()
 })

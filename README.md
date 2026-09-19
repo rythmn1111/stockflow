@@ -9,12 +9,28 @@ no cloud, no account.
 
 Runs on **macOS** and **Windows** (Linux builds work too).
 
+## Download
+
+Windows builds are on the [releases page](../../releases):
+
+- **`StockFlow-<version>-Setup.exe`** — installer; lets you choose the install directory,
+  creates shortcuts, and can be uninstalled from Add/Remove Programs.
+- **`StockFlow-<version>-Portable.exe`** — no install; run it from anywhere, including a
+  USB stick. Data still goes to `%APPDATA%\StockFlow`.
+
+Both are x64 and **unsigned**, so Windows SmartScreen will show
+*"Windows protected your PC"* on first run — choose **More info → Run anyway**. Verify
+the download against the SHA-256 published on the release if you want to be sure of the
+bytes.
+
+macOS builds are not published yet; build one locally with `bun run dist:mac`.
+
 ---
 
 ## Where it came from
 
-StockFlow is a rebuild of a spreadsheet — `Stock Register System.xlsm`, six sheets and a
-VBA macro. The sheets became the modules:
+StockFlow is a rebuild of a real stock-control spreadsheet — six sheets and a VBA macro,
+used by a small manufacturer. The sheets became the modules:
 
 | Workbook sheet | StockFlow |
 | --- | --- |
@@ -144,9 +160,9 @@ bun run seed:demo "$HOME/Library/Application Support/StockFlow"
 | `bun run dist:mac` | macOS `.dmg` + `.zip` for arm64 and x64 |
 | `bun run dist:win` | Windows installer + portable `.exe` |
 
-Native code is deliberately avoided, so a build machine needs no compiler toolchain.
-Cross-building is limited only by code signing: build macOS artifacts on macOS and
-Windows ones on Windows.
+Native code is deliberately avoided, so a build machine needs no compiler toolchain —
+and because nothing needs compiling, `dist:win` cross-builds from macOS without wine.
+macOS artifacts still have to be built on macOS, since only that can sign them.
 
 ---
 
