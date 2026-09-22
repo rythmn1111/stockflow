@@ -10,8 +10,30 @@
  *     table now, so correcting a phone number is one edit rather than many.
  */
 
-/** Raw material or finished good. The workbook called this `Item_Type (RM/FG)`. */
-export type ItemType = 'RM' | 'FG'
+/**
+ * What kind of thing an item is. The workbook had only RM and FG in a column called
+ * `Item_Type (RM/FG)`; the rest are the categories a real store actually holds.
+ *
+ * Type is not just a label — it decides what an item can take part in. See
+ * `ORDERABLE_TYPES` and `BOM_PARENT_TYPES`.
+ */
+export type ItemType = 'RM' | 'WIP' | 'FG' | 'BOUGHT_OUT' | 'CONSUMABLE' | 'ASSET'
+
+/** Ordered for display: roughly the path material takes through the building. */
+export const ITEM_TYPES: { value: ItemType; label: string; short: string; hint: string }[] = [
+  { value: 'RM', label: 'Raw material', short: 'RM', hint: 'Bought in and consumed to make something' },
+  { value: 'WIP', label: 'Work in progress', short: 'WIP', hint: 'A sub-assembly: made here, then used in something else' },
+  { value: 'FG', label: 'Finished good', short: 'FG', hint: 'Made here and sold' },
+  { value: 'BOUGHT_OUT', label: 'Bought out', short: 'BO', hint: 'Bought finished and resold without being made' },
+  { value: 'CONSUMABLE', label: 'Consumable', short: 'CONS', hint: 'Used up in production but not part of the product' },
+  { value: 'ASSET', label: 'Asset', short: 'ASSET', hint: 'Tooling or equipment that is held, not consumed' }
+]
+
+/** Types a customer order can be raised against — things you sell or produce. */
+export const ORDERABLE_TYPES: ItemType[] = ['FG', 'WIP', 'BOUGHT_OUT']
+
+/** Types that can have a bill of materials — things made rather than bought. */
+export const BOM_PARENT_TYPES: ItemType[] = ['FG', 'WIP']
 
 /** Ledger direction. The workbook used the strings INWARD / OUTWARD. */
 export type MoveDirection = 'in' | 'out'
@@ -48,6 +70,27 @@ export interface Supplier {
   updatedAt: number
 }
 
+/**
+ * A box size on the app's editable list. The workbook had `Packing Box Details` as
+ * free text per item, so the same carton existed under several spellings.
+ */
+export interface PackingBox {
+  id: string
+  label: string
+  lengthMm: number | null
+  widthMm: number | null
+  heightMm: number | null
+  /** The empty box's own weight — part of what actually ships. */
+  emptyWeight: number | null
+  notes: string | null
+  sortIndex: number
+  archivedAt: number | null
+  /** How many items are packed in this box; blocks deleting one that is in use. */
+  itemCount: number
+  createdAt: number
+  updatedAt: number
+}
+
 export interface Item {
   id: string
   code: string
@@ -59,10 +102,12 @@ export interface Item {
   reorderLevel: number
   netWeight: number | null
   grossWeight: number | null
-  packingBoxDetails: string | null
+  /** Chosen from the editable box list rather than typed. */
+  packingBoxId: string | null
   quantityPacked: number | null
   location: string | null
-  supplierId: string | null
+  /** The shelf or rack within `location`. Pick lists walk location, then rack. */
+  rack: string | null
   notes: string | null
   archivedAt: number | null
   createdAt: number
@@ -71,7 +116,19 @@ export interface Item {
 
 /** An item with everything the stock screens need, computed from the ledger. */
 export interface ItemWithStock extends Item {
+  /** The preferred supplier's name, or null when the item has no suppliers. */
   supplierName: string | null
+  preferredSupplierId: string | null
+  /** How many suppliers can provide this part. */
+  supplierCount: number
+  /** True when a photo has been attached; the bytes are fetched separately. */
+  hasPhoto: boolean
+  /** Small inline thumbnail (data URL) for list rows, when one exists. */
+  photoThumb: string | null
+  /** The chosen box's name, joined for display. */
+  packingBoxLabel: string | null
+  /** The chosen box's own weight, which shipping weight has to include. */
+  packingBoxEmptyWeight: number | null
   totalInward: number
   totalOutward: number
   /** openingStock + totalInward − totalOutward. */
@@ -91,6 +148,102 @@ export interface ItemWithStock extends Item {
   /** Number of distinct finished goods whose BOM references this item. */
   usedInBomCount: number
   lastMovedAt: number | null
+}
+
+/* ------------------------- item ↔ supplier links -------------------------- */
+
+/**
+ * One supplier's offer for one part. The workbook put a single supplier name and
+ * contact on every item row, so a part could only ever have one source and a changed
+ * phone number meant editing many rows.
+ *
+ * The per-vendor fields are the reason to hold more than one: they are what you compare.
+ */
+export interface ItemSupplierLink {
+  id: string
+  itemId: string
+  supplierId: string
+  /**
+   * Exactly one link per item carries this. It decides which supplier a shortage is
+   * grouped under in Purchasing — spreading one shortage across every possible supplier
+   * would multiply the quantity to buy.
+   */
+  isPreferred: boolean
+  /** This supplier's own part number, which is what goes on their purchase order. */
+  supplierSku: string | null
+  unitPrice: number | null
+  /** Overrides the supplier's default lead time for this part only. */
+  leadTimeDays: number | null
+  notes: string | null
+  createdAt: number
+  updatedAt: number
+}
+
+/** A link with the supplier's own details filled in, for the item screens. */
+export interface ItemSupplierLinkWithSupplier extends ItemSupplierLink {
+  supplierName: string
+  supplierContact: string | null
+  supplierPhone: string | null
+  supplierEmail: string | null
+  /** leadTimeDays if set on the link, otherwise the supplier's default. */
+  effectiveLeadTimeDays: number | null
+}
+
+/** A link with the item's details filled in, for the supplier card. */
+export interface ItemSupplierLinkWithItem extends ItemSupplierLink {
+  code: string
+  name: string
+  unit: string
+  type: ItemType
+  currentStock: number
+  freeStock: number
+  reorderLevel: number
+  belowReorder: boolean
+  location: string | null
+  rack: string | null
+  /** True when this supplier is the preferred source for the part. */
+  isPreferredSource: boolean
+  /** leadTimeDays if set on the link, otherwise the supplier's default. */
+  effectiveLeadTimeDays: number | null
+}
+
+/**
+ * Everything about one supplier, for the card that opens when you click them.
+ * Answers the question the workbook could not: which parts does this supplier give us,
+ * and what are they currently holding up?
+ */
+export interface SupplierDetail {
+  supplier: Supplier
+  /** Every part this supplier can provide. */
+  parts: ItemSupplierLinkWithItem[]
+  /** Parts where this supplier is the preferred source. */
+  preferredCount: number
+  /** Parts currently at or below their reorder level. */
+  belowReorderCount: number
+  /** Open shortages this supplier is the preferred source for. */
+  outstanding: {
+    itemId: string
+    code: string
+    name: string
+    unit: string
+    shortage: number
+    orderNos: string[]
+    orderByDate: number | null
+  }[]
+  /** Sum of unitPrice × shortage across `outstanding`, where a price is known. */
+  outstandingValue: number | null
+  /** Recent receipts from this supplier, newest first. */
+  recentReceipts: { id: string; movedAt: number; code: string; name: string; qty: number; unit: string; referenceNo: string | null }[]
+}
+
+/** Photo metadata, without the bytes. */
+export interface ItemPhotoMeta {
+  itemId: string
+  mime: string
+  width: number | null
+  height: number | null
+  bytes: number
+  createdAt: number
 }
 
 export interface BomLine {
@@ -247,9 +400,13 @@ export interface PurchaseSuggestion {
 
 export interface DashboardStats {
   itemCount: number
-  rmCount: number
-  fgCount: number
+  /** One entry per type that has at least one item, in ITEM_TYPES order. */
+  byType: { type: ItemType; label: string; count: number }[]
   supplierCount: number
+  /** Items nobody is recorded as selling — they can never reach a purchase list. */
+  itemsWithoutSupplier: number
+  /** Parts with more than one source, which is what makes a fallback possible. */
+  itemsWithAlternateSuppliers: number
   /** Items at or below their reorder level, free stock basis. */
   belowReorderCount: number
   /** Items the ledger has driven negative — impossible in reality, so worth surfacing. */
@@ -289,13 +446,21 @@ export interface AppSettings {
 
 export interface ItemQuery {
   search?: string
+  /** Single type, kept for convenience. `types` wins when both are given. */
   type?: ItemType | 'all'
+  /** Several types at once, which is what the six-way type filter needs. */
+  types?: ItemType[]
+  /** Matches any linked supplier, not only the preferred one. */
   supplierIds?: string[]
   locations?: string[]
+  racks?: string[]
+  hasPhoto?: boolean
+  /** Items nobody is recorded as selling — they cannot appear on a purchase list. */
+  noSupplier?: boolean
   /** Narrow to a stock condition rather than making the user eyeball the list. */
   stockFilter?: 'all' | 'below_reorder' | 'negative' | 'zero' | 'in_stock' | 'no_reorder_level'
   scope?: 'active' | 'archived' | 'all'
-  sort?: 'code' | 'name' | 'stock_asc' | 'stock_desc' | 'shortfall' | 'recent'
+  sort?: 'code' | 'name' | 'stock_asc' | 'stock_desc' | 'shortfall' | 'recent' | 'location'
   limit?: number
   offset?: number
 }
@@ -338,6 +503,8 @@ export interface PackingBreakdown {
   /** Units that fit in one box, from the item's `Quantity Packed` field. */
   unitsPerBox: number | null
   boxDetails: string | null
+  /** The box's own weight × number of boxes, when the box list records one. */
+  boxesWeight: number | null
   fullBoxes: number
   /** Units left over after filling whole boxes. */
   loose: number
@@ -386,6 +553,8 @@ export interface PickListLine {
   name: string
   unit: string
   location: string | null
+  /** The rack within the location; the walk is ordered by it. */
+  rack: string | null
   qtyToPick: number
   onHand: number
   /** How much of qtyToPick the shelf cannot cover right now. */

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { AlertTriangleIcon, PackageIcon } from 'lucide-react'
 import type { OrderStatus } from '@shared/types'
+import { ORDERABLE_TYPES } from '@shared/types'
 import type { OrderInput } from '@shared/api'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -22,7 +23,9 @@ import { useUiStore } from '@/store/ui'
 export function OrderFormDialog(): React.JSX.Element {
   const { orderFormOpen, orderFormId, closeOrderForm } = useUiStore()
   const { data: existing } = useOrder(orderFormOpen ? orderFormId : null)
-  const { data: itemsResult } = useItems({ scope: 'active', type: 'FG', sort: 'code', limit: 1000 })
+  // Things you can sell or produce: finished goods, sub-assemblies, and items bought
+  // in finished and resold.
+  const { data: itemsResult } = useItems({ scope: 'active', types: ORDERABLE_TYPES, sort: 'code', limit: 1000 })
 
   const [orderNo, setOrderNo] = useState('')
   const [orderDate, setOrderDate] = useState(toDateInput(Date.now()))
@@ -144,13 +147,14 @@ export function OrderFormDialog(): React.JSX.Element {
                   <SelectItem key={option.id} value={option.id}>
                     <span className="font-mono text-xs">{option.code}</span>
                     <span className="ml-2 text-muted-foreground">{option.name}</span>
+                    <span className="ml-1.5 font-mono text-[10px] text-muted-foreground/70">{option.type}</span>
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
             {fgItems.length === 0 && (
               <p className="text-[11px] text-muted-foreground">
-                No finished goods yet — add an item with type FG first.
+                Nothing sellable yet — add an item typed as a finished good, work in progress, or bought out.
               </p>
             )}
           </div>

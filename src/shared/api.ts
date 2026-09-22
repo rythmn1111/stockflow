@@ -5,6 +5,8 @@ import type {
   Item,
   ItemQuery,
   ItemType,
+  ItemPhotoMeta,
+  ItemSupplierLinkWithSupplier,
   ItemWithStock,
   LocationSummary,
   MoveQuery,
@@ -14,12 +16,14 @@ import type {
   OrderStatus,
   OrderPacking,
   OrderWithItem,
+  PackingBox,
   PickList,
   PlanWithLines,
   PurchaseSuggestion,
   StockAsOf,
   StockMoveWithItem,
   Supplier,
+  SupplierDetail,
   WeightRollup
 } from './types'
 
@@ -39,7 +43,7 @@ export interface BackupInfo {
 }
 
 export interface DataChangedEvent {
-  scope: 'items' | 'suppliers' | 'bom' | 'orders' | 'moves' | 'plans' | 'settings' | 'all'
+  scope: 'items' | 'suppliers' | 'bom' | 'orders' | 'moves' | 'plans' | 'purchasing' | 'editables' | 'settings' | 'all'
 }
 
 export type NavPage =
@@ -51,6 +55,7 @@ export type NavPage =
   | 'ledger'
   | 'purchasing'
   | 'locations'
+  | 'editables'
   | 'settings'
   | 'new-item'
   | 'new-move'
@@ -72,11 +77,43 @@ export interface ItemInput {
   reorderLevel?: number
   netWeight?: number | null
   grossWeight?: number | null
-  packingBoxDetails?: string | null
+  packingBoxId?: string | null
   quantityPacked?: number | null
   location?: string | null
-  supplierId?: string | null
+  rack?: string | null
   notes?: string | null
+  /**
+   * Suppliers to link on create, so the item form can capture them in one save rather
+   * than making the user create the item and then come back for its sources.
+   */
+  suppliers?: {
+    supplierId: string
+    isPreferred?: boolean
+    supplierSku?: string | null
+    unitPrice?: number | null
+    leadTimeDays?: number | null
+  }[]
+}
+
+/** A supplier created inline from the item form, before it has an id. */
+export interface NewSupplierInput {
+  name: string
+  contact?: string | null
+  phone?: string | null
+  email?: string | null
+  leadTimeDays?: number | null
+}
+
+/** A downscaled image on its way in from the renderer. */
+export interface PhotoInput {
+  itemId: string
+  mime: string
+  /** Base64 (no data-URL prefix) of the small list thumbnail. */
+  thumbBase64: string
+  /** Base64 of the bounded display copy. */
+  fullBase64: string
+  width?: number | null
+  height?: number | null
 }
 
 export interface MoveInput {
@@ -103,7 +140,8 @@ export interface OrderInput {
 
 export interface ItemDetail {
   item: ItemWithStock
-  supplier: Supplier | null
+  /** Every supplier for this part, preferred first. */
+  suppliers: ItemSupplierLinkWithSupplier[]
   /** BOM lines where this item is the parent. Empty for a raw material. */
   componentsOf: BomLineWithItems[]
   /** BOM lines where this item is the component — what it feeds into. */
@@ -113,6 +151,9 @@ export interface ItemDetail {
   commitments: { orderId: string; orderNo: string; qty: number; dueDate: number | null }[]
   /** 30 days of running balance for the item's sparkline. */
   balanceHistory: { date: string; balance: number }[]
+  /** The display copy as a data URL, fetched only for the detail view. */
+  photo: string | null
+  photoMeta: ItemPhotoMeta | null
 }
 
 export interface IssueResult {
@@ -147,6 +188,9 @@ export interface StockFlowApi {
     remove: (id: string) => Promise<{ ok: boolean; error?: string }>
     /** Items sourced from this supplier, for the delete confirmation. */
     itemCount: (id: string) => Promise<number>
+    /** The supplier card: their parts, what they are holding up, recent receipts. */
+    detail: (id: string) => Promise<SupplierDetail | null>
+    exportPartsCsv: (id: string) => Promise<{ path: string | null }>
   }
 
   items: {
@@ -159,7 +203,33 @@ export interface StockFlowApi {
     setArchived: (id: string, archived: boolean) => Promise<Item | null>
     remove: (id: string) => Promise<{ ok: boolean; error?: string }>
     locations: () => Promise<string[]>
+    racks: () => Promise<string[]>
     units: () => Promise<string[]>
+
+    /* --- suppliers for a part --- */
+    suppliers: (itemId: string) => Promise<ItemSupplierLinkWithSupplier[]>
+    attachSupplier: (
+      itemId: string,
+      supplierId: string,
+      details?: { supplierSku?: string | null; unitPrice?: number | null; leadTimeDays?: number | null; isPreferred?: boolean }
+    ) => Promise<{ ok: boolean; error?: string }>
+    updateSupplierLink: (
+      linkId: string,
+      patch: { supplierSku?: string | null; unitPrice?: number | null; leadTimeDays?: number | null; isPreferred?: boolean }
+    ) => Promise<{ ok: boolean; error?: string }>
+    detachSupplier: (linkId: string) => Promise<{ ok: boolean; error?: string }>
+    setPreferredSupplier: (itemId: string, supplierId: string) => Promise<{ ok: boolean; error?: string }>
+    /** Creates a supplier and links it to the part in one step, for the item form. */
+    createAndAttachSupplier: (
+      itemId: string,
+      supplier: NewSupplierInput,
+      details?: { supplierSku?: string | null; unitPrice?: number | null; leadTimeDays?: number | null }
+    ) => Promise<{ ok: boolean; supplier: Supplier | null; error?: string }>
+
+    /* --- photo --- */
+    photo: (itemId: string) => Promise<string | null>
+    setPhoto: (input: PhotoInput) => Promise<{ ok: boolean; error?: string }>
+    removePhoto: (itemId: string) => Promise<boolean>
     /** Every item's balance at a chosen instant, from the ledger. */
     stockAsOf: (at: number) => Promise<StockAsOf[]>
     exportCsv: () => Promise<{ path: string | null }>
@@ -236,6 +306,40 @@ export interface StockFlowApi {
     /** Shortages across every live plan, grouped by supplier. */
     suggestions: () => Promise<PurchaseSuggestion[]>
     exportCsv: () => Promise<{ path: string | null }>
+  }
+
+  /**
+   * Editable lists that feed dropdowns elsewhere in the app. Packing boxes are the
+   * first; each list gets typed fields rather than being a bag of strings.
+   */
+  editables: {
+    packingBoxes: {
+      list: (includeArchived?: boolean) => Promise<PackingBox[]>
+      create: (input: {
+        label: string
+        lengthMm?: number | null
+        widthMm?: number | null
+        heightMm?: number | null
+        emptyWeight?: number | null
+        notes?: string | null
+      }) => Promise<{ ok: boolean; box: PackingBox | null; error?: string }>
+      update: (
+        id: string,
+        patch: {
+          label?: string
+          lengthMm?: number | null
+          widthMm?: number | null
+          heightMm?: number | null
+          emptyWeight?: number | null
+          notes?: string | null
+          archived?: boolean
+        }
+      ) => Promise<{ ok: boolean; error?: string }>
+      remove: (id: string) => Promise<{ ok: boolean; error?: string }>
+      reorder: (orderedIds: string[]) => Promise<PackingBox[]>
+      /** Items packed in one box, for the editables screen. */
+      itemsIn: (id: string) => Promise<{ id: string; code: string; name: string; quantityPacked: number | null }[]>
+    }
   }
 
   locations: {

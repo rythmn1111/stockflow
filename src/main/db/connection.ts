@@ -65,13 +65,17 @@ function runMigrations(database: DatabaseSync): void {
   if (from > LATEST_VERSION) {
     throw new Error(
       `Database schema v${from} is newer than this app supports (v${LATEST_VERSION}). ` +
-        'Update LeadFlow instead of downgrading.'
+        'Update StockFlow instead of downgrading.'
     )
   }
 
   for (const migration of migrations) {
     if (migration.version <= from) continue
     log.info('db', `migrating to v${migration.version} (${migration.name})`)
+
+    // Rebuilding a table that others reference needs foreign keys off, and that pragma
+    // is a no-op inside a transaction — so it has to be toggled out here.
+    if (migration.disableForeignKeys) database.exec('PRAGMA foreign_keys = OFF')
     database.exec('BEGIN')
     try {
       migration.up(database)
@@ -81,6 +85,18 @@ function runMigrations(database: DatabaseSync): void {
     } catch (err) {
       database.exec('ROLLBACK')
       throw new Error(`Migration v${migration.version} (${migration.name}) failed: ${String(err)}`)
+    } finally {
+      if (migration.disableForeignKeys) {
+        database.exec('PRAGMA foreign_keys = ON')
+        // A rebuild that left a dangling reference must not pass silently.
+        const orphans = database.prepare('PRAGMA foreign_key_check').all()
+        if (orphans.length) {
+          throw new Error(
+            `Migration v${migration.version} (${migration.name}) left ${orphans.length} orphaned row(s): ` +
+              JSON.stringify(orphans.slice(0, 5))
+          )
+        }
+      }
     }
   }
 }

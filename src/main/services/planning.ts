@@ -1,7 +1,7 @@
 import type { PlanWithLines, PurchaseSuggestion } from '@shared/types'
 import type { IssueResult } from '@shared/api'
 import { bomRepo } from '../db/bom'
-import { itemsRepo } from '../db/items'
+import { itemSuppliersRepo } from '../db/item-suppliers'
 import { movesRepo } from '../db/moves'
 import { ordersRepo } from '../db/orders'
 import { plansRepo, type NewPlanLine } from '../db/plans'
@@ -58,8 +58,6 @@ export function planOrder(orderId: string): { ok: boolean; plan: PlanWithLines |
       const alreadyIssued = movesRepo.issuedToOrder(line.itemId, orderId)
       const outstanding = atLeastZero(line.qty - alreadyIssued)
       const shortage = atLeastZero(outstanding - free)
-      const item = itemsRepo.getPlain(line.itemId)
-
       return {
         rmItemId: line.itemId,
         qtyRequired: round(line.qty),
@@ -67,7 +65,10 @@ export function planOrder(orderId: string): { ok: boolean; plan: PlanWithLines |
         shortage,
         alreadyIssued,
         depth: line.depth,
-        supplierId: item?.supplierId ?? null
+        // Snapshot of who we intended to buy from. A part can have several suppliers,
+        // so this records the preferred one as it stood when the plan ran — changing
+        // the preference later does not rewrite history.
+        supplierId: itemSuppliersRepo.preferredFor(line.itemId)
       }
     })
 

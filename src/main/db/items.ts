@@ -3,6 +3,7 @@ import type { ItemInput } from '@shared/api'
 import { query, queryOne, run, transaction } from './connection'
 import { ids } from '../lib/ids'
 import { round } from '../lib/num'
+import { itemSuppliersRepo } from './item-suppliers'
 
 interface ItemRow {
   id: string
@@ -14,10 +15,10 @@ interface ItemRow {
   reorder_level: number
   net_weight: number | null
   gross_weight: number | null
-  packing_box_details: string | null
+  packing_box_id: string | null
   quantity_packed: number | null
   location: string | null
-  supplier_id: string | null
+  rack: string | null
   notes: string | null
   archived_at: number | null
   created_at: number
@@ -26,6 +27,12 @@ interface ItemRow {
 
 type StockRow = ItemRow & {
   supplier_name: string | null
+  preferred_supplier_id: string | null
+  supplier_count: number | null
+  photo_mime: string | null
+  photo_thumb: Uint8Array | null
+  packing_box_label: string | null
+  packing_box_empty_weight: number | null
   total_inward: number | null
   total_outward: number | null
   current_stock: number | null
@@ -45,10 +52,10 @@ function toItem(r: ItemRow): Item {
     reorderLevel: r.reorder_level,
     netWeight: r.net_weight,
     grossWeight: r.gross_weight,
-    packingBoxDetails: r.packing_box_details,
+    packingBoxId: r.packing_box_id,
     quantityPacked: r.quantity_packed,
     location: r.location,
-    supplierId: r.supplier_id,
+    rack: r.rack,
     notes: r.notes,
     archivedAt: r.archived_at,
     createdAt: r.created_at,
@@ -64,6 +71,14 @@ function toItemWithStock(r: StockRow): ItemWithStock {
   return {
     ...toItem(r),
     supplierName: r.supplier_name,
+    preferredSupplierId: r.preferred_supplier_id,
+    supplierCount: r.supplier_count ?? 0,
+    hasPhoto: !!r.photo_thumb,
+    photoThumb: r.photo_thumb
+      ? `data:${r.photo_mime ?? 'image/jpeg'};base64,${Buffer.from(r.photo_thumb).toString('base64')}`
+      : null,
+    packingBoxLabel: r.packing_box_label,
+    packingBoxEmptyWeight: r.packing_box_empty_weight,
     totalInward: round(r.total_inward ?? 0),
     totalOutward: round(r.total_outward ?? 0),
     currentStock,
@@ -85,24 +100,29 @@ function toItemWithStock(r: StockRow): ItemWithStock {
 const SELECT_WITH_STOCK = `
   SELECT i.*,
          s.name AS supplier_name,
+         pref.supplier_id AS preferred_supplier_id,
+         (SELECT COUNT(*) FROM item_suppliers a WHERE a.item_id = i.id) AS supplier_count,
+         ph.mime AS photo_mime, ph.thumb AS photo_thumb,
+         pbx.label AS packing_box_label, pbx.empty_weight AS packing_box_empty_weight,
          st.total_inward, st.total_outward, st.current_stock, st.last_moved_at,
          c.committed,
          (SELECT COUNT(DISTINCT b.fg_item_id) FROM bom_lines b WHERE b.rm_item_id = i.id) AS used_in_bom_count
     FROM items i
-    LEFT JOIN suppliers s      ON s.id = i.supplier_id
-    LEFT JOIN item_stock st    ON st.item_id = i.id
-    LEFT JOIN item_committed c ON c.item_id = i.id`
+    LEFT JOIN item_suppliers pref ON pref.item_id = i.id AND pref.is_preferred = 1
+    LEFT JOIN suppliers s         ON s.id = pref.supplier_id
+    LEFT JOIN item_photos ph      ON ph.item_id = i.id
+    LEFT JOIN packing_boxes pbx   ON pbx.id = i.packing_box_id
+    LEFT JOIN item_stock st       ON st.item_id = i.id
+    LEFT JOIN item_committed c    ON c.item_id = i.id`
 
 function searchBlob(item: {
   code: string
   name: string
   location?: string | null
+  rack?: string | null
   notes?: string | null
-  packingBoxDetails?: string | null
 }): string {
-  return [item.code, item.name, item.location ?? '', item.notes ?? '', item.packingBoxDetails ?? '']
-    .join(' ')
-    .toLowerCase()
+  return [item.code, item.name, item.location ?? '', item.rack ?? '', item.notes ?? ''].join(' ').toLowerCase()
 }
 
 export const itemsRepo = {
@@ -131,10 +151,11 @@ export const itemsRepo = {
 
     const now = Date.now()
     const id = ids.item()
-    run(
+    return transaction(() => {
+      run(
       `INSERT INTO items (
          id, code, name, unit, type, opening_stock, reorder_level, net_weight, gross_weight,
-         packing_box_details, quantity_packed, location, supplier_id, notes, search_blob,
+         packing_box_id, quantity_packed, location, rack, notes, search_blob,
          archived_at, created_at, updated_at
        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
       [
@@ -147,17 +168,23 @@ export const itemsRepo = {
         round(input.reorderLevel ?? 0),
         input.netWeight ?? null,
         input.grossWeight ?? null,
-        input.packingBoxDetails?.trim() || null,
+        input.packingBoxId ?? null,
         input.quantityPacked ?? null,
         input.location?.trim() || null,
-        input.supplierId ?? null,
+        input.rack?.trim() || null,
         input.notes?.trim() || null,
         searchBlob({ ...input, code, name }),
         now,
         now
       ]
-    )
-    return { item: itemsRepo.getPlain(id)!, duplicate: false }
+      )
+
+      // Honoured here rather than in the IPC handler: the input type promises it, so
+      // every caller — importers, seeds, tests — has to get the same behaviour.
+      if (input.suppliers?.length) itemSuppliersRepo.replaceFor(id, input.suppliers)
+
+      return { item: itemsRepo.getPlain(id)!, duplicate: false }
+    })
   },
 
   update(id: string, patch: Partial<ItemInput>): Item | null {
@@ -191,22 +218,28 @@ export const itemsRepo = {
     if (patch.netWeight !== undefined) push('net_weight', patch.netWeight)
     if (patch.grossWeight !== undefined) push('gross_weight', patch.grossWeight)
     if (patch.quantityPacked !== undefined) push('quantity_packed', patch.quantityPacked)
-    if (patch.supplierId !== undefined) push('supplier_id', patch.supplierId)
-    for (const key of ['packingBoxDetails', 'location', 'notes'] as const) {
+    if (patch.packingBoxId !== undefined) push('packing_box_id', patch.packingBoxId)
+    for (const key of ['location', 'rack', 'notes'] as const) {
       if (patch[key] !== undefined) {
-        const column = key === 'packingBoxDetails' ? 'packing_box_details' : key
+        const column = key
         const value = patch[key]?.toString().trim() || null
         ;(next as unknown as Record<string, unknown>)[key] = value
         push(column, value)
       }
     }
-    if (!sets.length) return current
+    // A supplier-only edit is still an edit, so it must not fall through as a no-op.
+    if (!sets.length && !patch.suppliers) return current
 
-    push('search_blob', searchBlob(next))
-    push('updated_at', Date.now())
-    params.push(id)
-    run(`UPDATE items SET ${sets.join(', ')} WHERE id = ?`, params)
-    return itemsRepo.getPlain(id)
+    return transaction(() => {
+      if (sets.length) {
+        push('search_blob', searchBlob(next))
+        push('updated_at', Date.now())
+        params.push(id)
+        run(`UPDATE items SET ${sets.join(', ')} WHERE id = ?`, params)
+      }
+      if (patch.suppliers) itemSuppliersRepo.replaceFor(id, patch.suppliers)
+      return itemsRepo.getPlain(id)
+    })
   },
 
   setArchived(id: string, archived: boolean): Item | null {
@@ -264,18 +297,34 @@ export const itemsRepo = {
         params.push(`%${term}%`)
       }
     }
-    if (q.type && q.type !== 'all') {
+    if (q.types?.length) {
+      where.push(`i.type IN (${q.types.map(() => '?').join(',')})`)
+      params.push(...q.types)
+    } else if (q.type && q.type !== 'all') {
       where.push('i.type = ?')
       params.push(q.type)
     }
     if (q.supplierIds?.length) {
-      where.push(`i.supplier_id IN (${q.supplierIds.map(() => '?').join(',')})`)
+      // Matches any linked supplier, not just the preferred one — "what does S-3 sell
+      // us" should include parts where they are the second source.
+      where.push(
+        `EXISTS (SELECT 1 FROM item_suppliers isf
+                  WHERE isf.item_id = i.id
+                    AND isf.supplier_id IN (${q.supplierIds.map(() => '?').join(',')}))`
+      )
       params.push(...q.supplierIds)
     }
     if (q.locations?.length) {
       where.push(`i.location IN (${q.locations.map(() => '?').join(',')})`)
       params.push(...q.locations)
     }
+    if (q.racks?.length) {
+      where.push(`i.rack IN (${q.racks.map(() => '?').join(',')})`)
+      params.push(...q.racks)
+    }
+    if (q.hasPhoto === true) where.push('EXISTS (SELECT 1 FROM item_photos p WHERE p.item_id = i.id)')
+    if (q.hasPhoto === false) where.push('NOT EXISTS (SELECT 1 FROM item_photos p WHERE p.item_id = i.id)')
+    if (q.noSupplier === true) where.push('NOT EXISTS (SELECT 1 FROM item_suppliers n WHERE n.item_id = i.id)')
 
     // Stock conditions read off the views, so they stay in step with the ledger.
     const free = 'COALESCE(st.current_stock, i.opening_stock) - COALESCE(c.committed, 0)'
@@ -305,7 +354,9 @@ export const itemsRepo = {
       stock_desc: `${free} DESC`,
       // Most urgent first: how far below the reorder level the item has fallen.
       shortfall: `CASE WHEN i.reorder_level > 0 THEN i.reorder_level - ${free} ELSE -1e12 END DESC`,
-      recent: 'i.updated_at DESC'
+      recent: 'i.updated_at DESC',
+      // Shelf order, so the list matches the walk a pick list would take.
+      location: 'i.location IS NULL, i.location COLLATE NOCASE ASC, i.rack COLLATE NOCASE ASC, i.code COLLATE NOCASE ASC'
     }[q.sort ?? 'code']
 
     const total =
@@ -335,6 +386,13 @@ export const itemsRepo = {
     return query<{ location: string }>(
       "SELECT DISTINCT location FROM items WHERE location IS NOT NULL AND location != '' ORDER BY location"
     ).map((r) => r.location)
+  },
+
+  /** Distinct non-empty racks, for the filter dropdown. */
+  racks(): string[] {
+    return query<{ rack: string }>(
+      "SELECT DISTINCT rack FROM items WHERE rack IS NOT NULL AND rack != '' ORDER BY rack"
+    ).map((r) => r.rack)
   },
 
   /** Units already in use, so the item form can suggest rather than dictate. */

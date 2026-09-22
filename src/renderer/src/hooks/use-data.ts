@@ -10,9 +10,11 @@ import type {
   MoveQuery,
   OrderQuery,
   OrderWithItem,
+  PackingBox,
   PlanWithLines,
   PurchaseSuggestion,
-  Supplier
+  Supplier,
+  SupplierDetail
 } from '@shared/types'
 import { INVALIDATION_MAP, qk } from '@/lib/query-keys'
 
@@ -56,6 +58,43 @@ export function useItemDetail(id: string | null) {
 
 export function useItemLocations(): UseQueryResult<string[]> {
   return useQuery({ queryKey: qk.itemLocations, queryFn: () => api().items.locations(), staleTime: 60_000 })
+}
+
+export function useItemRacks(): UseQueryResult<string[]> {
+  return useQuery({ queryKey: qk.itemRacks, queryFn: () => api().items.racks(), staleTime: 60_000 })
+}
+
+export function useItemSuppliers(itemId: string | null) {
+  return useQuery({
+    queryKey: qk.itemSuppliers(itemId ?? 'none'),
+    queryFn: () => (itemId ? api().items.suppliers(itemId) : Promise.resolve([])),
+    enabled: !!itemId
+  })
+}
+
+export function useSupplierDetail(id: string | null): UseQueryResult<SupplierDetail | null> {
+  return useQuery({
+    queryKey: qk.supplierDetail(id ?? 'none'),
+    queryFn: () => (id ? api().suppliers.detail(id) : Promise.resolve(null)),
+    enabled: !!id
+  })
+}
+
+/** The editable packing-box list, which the item form's dropdown reads. */
+export function usePackingBoxes(includeArchived = false): UseQueryResult<PackingBox[]> {
+  return useQuery({
+    queryKey: [...qk.editablesBoxes, includeArchived],
+    queryFn: () => api().editables.packingBoxes.list(includeArchived),
+    staleTime: 60_000
+  })
+}
+
+export function usePackingBoxItems(id: string | null) {
+  return useQuery({
+    queryKey: qk.editablesBoxItems(id ?? 'none'),
+    queryFn: () => (id ? api().editables.packingBoxes.itemsIn(id) : Promise.resolve([])),
+    enabled: !!id
+  })
 }
 
 export function useItemUnits(): UseQueryResult<string[]> {

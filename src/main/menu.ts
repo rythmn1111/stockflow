@@ -67,7 +67,8 @@ export function buildAppMenu(
         { label: 'Material Log', accelerator: 'CmdOrCtrl+5', click: go('ledger') },
         { label: 'Purchasing', accelerator: 'CmdOrCtrl+6', click: go('purchasing') },
         { label: 'Locations', accelerator: 'CmdOrCtrl+7', click: go('locations') },
-        { label: 'Suppliers', accelerator: 'CmdOrCtrl+8', click: go('suppliers') }
+        { label: 'Suppliers', accelerator: 'CmdOrCtrl+8', click: go('suppliers') },
+        { label: 'Editables', accelerator: 'CmdOrCtrl+9', click: go('editables') }
       ]
     },
     {

@@ -19,6 +19,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Separator } from '@/components/ui/separator'
+import { BOM_PARENT_TYPES } from '@shared/types'
 import { ItemCode, ItemTypeBadge } from '@/components/stock-bits'
 import { qk } from '@/lib/query-keys'
 import { formatQty, pluralise } from '@/lib/format'
@@ -35,7 +36,9 @@ import { cn } from '@/lib/utils'
  * — including through sub-assemblies, which the one-level VLOOKUP could not follow.
  */
 export function BomPage(): React.JSX.Element {
-  const { data: fgResult } = useItems({ scope: 'active', type: 'FG', sort: 'code', limit: 1000 })
+  // Finished goods and sub-assemblies: the things that are made, so the things that
+  // can have a bill of materials.
+  const { data: fgResult } = useItems({ scope: 'active', types: BOM_PARENT_TYPES, sort: 'code', limit: 1000 })
   const { data: allItems } = useItems({ scope: 'active', sort: 'code', limit: 2000 })
   const [selectedFg, setSelectedFg] = useState<string>('')
   const [previewQty, setPreviewQty] = useState('1')
@@ -100,8 +103,8 @@ export function BomPage(): React.JSX.Element {
       <div className="p-5">
         <EmptyState
           icon={FactoryIcon}
-          title="No finished goods yet"
-          description="A bill of materials describes what a finished good is made from. Add an item with type FG first, then list its components here."
+          title="Nothing that gets made yet"
+          description="A bill of materials describes what something is made from. Add an item typed as a finished good or work in progress, then list its components here."
           action={<Button onClick={() => useUiStore.getState().openItemForm(null, { type: 'FG' })}>Add a finished good</Button>}
         />
       </div>
@@ -122,6 +125,7 @@ export function BomPage(): React.JSX.Element {
                 <SelectItem key={item.id} value={item.id}>
                   <span className="font-mono text-xs">{item.code}</span>
                   <span className="ml-2 text-muted-foreground">{item.name}</span>
+                  <span className="ml-1.5 font-mono text-[10px] text-muted-foreground/70">{item.type}</span>
                 </SelectItem>
               ))}
             </SelectContent>

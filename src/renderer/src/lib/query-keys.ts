@@ -6,10 +6,15 @@ export const qk = {
   settings: ['settings'] as const,
   suppliers: (search?: string) => ['suppliers', search ?? ''] as const,
   suppliersRoot: ['suppliers'] as const,
+  supplierDetail: (id: string) => ['suppliers', 'detail', id] as const,
+  editablesBoxes: ['editables', 'boxes'] as const,
+  editablesBoxItems: (id: string) => ['editables', 'boxes', 'items', id] as const,
   items: (query: ItemQuery) => ['items', 'list', query] as const,
   itemsRoot: ['items'] as const,
   item: (id: string) => ['items', 'detail', id] as const,
   itemLocations: ['items', 'locations'] as const,
+  itemRacks: ['items', 'racks'] as const,
+  itemSuppliers: (itemId: string) => ['items', 'suppliers', itemId] as const,
   itemUnits: ['items', 'units'] as const,
   stockAsOf: (at: number) => ['items', 'as-of', at] as const,
   bom: (fgItemId?: string) => ['bom', fgItemId ?? 'all'] as const,
@@ -38,12 +43,17 @@ export const qk = {
  * than it looks like it should — these lists are deliberately generous.
  */
 export const INVALIDATION_MAP: Record<string, readonly (readonly string[])[]> = {
-  items: [['items'], ['bom'], ['purchasing'], ['locations'], ['dashboard'], ['orders'], ['plans']],
+  items: [['items'], ['bom'], ['purchasing'], ['locations'], ['dashboard'], ['orders'], ['plans'], ['editables']],
   suppliers: [['suppliers'], ['items'], ['purchasing'], ['plans']],
+  purchasing: [['purchasing'], ['suppliers'], ['dashboard']],
+  editables: [['editables'], ['items'], ['orders']],
   bom: [['bom'], ['orders'], ['plans'], ['dashboard']],
   orders: [['orders'], ['plans'], ['items'], ['purchasing'], ['dashboard']],
   moves: [['moves'], ['items'], ['orders'], ['plans'], ['purchasing'], ['locations'], ['dashboard']],
   plans: [['plans'], ['orders'], ['items'], ['purchasing'], ['dashboard']],
   settings: [['settings']],
-  all: [['items'], ['suppliers'], ['bom'], ['orders'], ['moves'], ['plans'], ['purchasing'], ['locations'], ['dashboard'], ['settings']]
+  all: [
+    ['items'], ['suppliers'], ['bom'], ['orders'], ['moves'], ['plans'],
+    ['purchasing'], ['locations'], ['editables'], ['dashboard'], ['settings']
+  ]
 }

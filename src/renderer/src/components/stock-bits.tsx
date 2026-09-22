@@ -1,5 +1,6 @@
-import { AlertTriangleIcon, ArrowDownIcon, ArrowUpIcon, PackageIcon } from 'lucide-react'
+import { AlertTriangleIcon, ArrowDownIcon, ArrowUpIcon, ImageIcon, PackageIcon, StarIcon } from 'lucide-react'
 import type { ItemType, MoveDirection, OrderStatus } from '@shared/types'
+import { ITEM_TYPES } from '@shared/types'
 import { Badge } from '@/components/ui/badge'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -7,17 +8,81 @@ import { formatQty, ORDER_STATUS_LABELS } from '@/lib/format'
 
 /** Small display pieces shared across the stock screens. */
 
+/** One colour per type, so the six are distinguishable at a glance in a long list. */
+const TYPE_TONE: Record<ItemType, string> = {
+  RM: 'border-cyan-500/40 text-cyan-500',
+  WIP: 'border-amber-500/40 text-amber-600',
+  FG: 'border-violet-500/40 text-violet-500',
+  BOUGHT_OUT: 'border-blue-500/40 text-blue-500',
+  CONSUMABLE: 'border-emerald-500/40 text-emerald-500',
+  ASSET: 'border-muted-foreground/40 text-muted-foreground'
+}
+
 export function ItemTypeBadge({ type }: { type: ItemType }): React.JSX.Element {
+  const meta = ITEM_TYPES.find((t) => t.value === type)
   return (
-    <Badge
-      variant="outline"
-      className={cn(
-        'h-5 px-1.5 font-mono text-[10px] tracking-wide',
-        type === 'FG' ? 'border-violet-500/40 text-violet-500' : 'border-cyan-500/40 text-cyan-500'
-      )}
-    >
-      {type}
-    </Badge>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Badge variant="outline" className={cn('h-5 px-1.5 font-mono text-[10px] tracking-wide', TYPE_TONE[type])}>
+          {meta?.short ?? type}
+        </Badge>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-56 text-xs">
+        <p className="font-medium">{meta?.label ?? type}</p>
+        {meta?.hint && <p className="text-muted-foreground">{meta.hint}</p>}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+/** The item's picture, or a neutral placeholder so rows keep their alignment. */
+export function ItemThumb({
+  src,
+  alt,
+  size = 28,
+  className
+}: {
+  src: string | null
+  alt: string
+  size?: number
+  className?: string
+}): React.JSX.Element {
+  if (!src) {
+    return (
+      <div
+        className={cn('flex shrink-0 items-center justify-center rounded border bg-muted/40', className)}
+        style={{ width: size, height: size }}
+      >
+        <ImageIcon className="size-3 text-muted-foreground/50" />
+      </div>
+    )
+  }
+  return (
+    <img
+      src={src}
+      alt={alt}
+      loading="lazy"
+      className={cn('shrink-0 rounded border object-cover', className)}
+      style={{ width: size, height: size }}
+    />
+  )
+}
+
+/** Marks the supplier a shortage will be grouped under. */
+export function PreferredBadge({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Badge variant="success" className={cn('h-4 gap-0.5 px-1 text-[10px]', className)}>
+          <StarIcon className="size-2.5" />
+          preferred
+        </Badge>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-64 text-xs">
+        Shortages for this part are grouped under this supplier on the purchase list. The others are
+        alternatives you can fall back on.
+      </TooltipContent>
+    </Tooltip>
   )
 }
 

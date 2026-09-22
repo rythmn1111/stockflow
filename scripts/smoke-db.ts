@@ -13,6 +13,7 @@ import { ordersRepo } from '../src/main/db/orders'
 import { movesRepo } from '../src/main/db/moves'
 import { settingsRepo } from '../src/main/db/settings'
 import { statsRepo } from '../src/main/db/stats'
+import { itemSuppliersRepo } from '../src/main/db/item-suppliers'
 
 let failures = 0
 function check(label: string, condition: unknown, extra?: unknown): void {
@@ -55,12 +56,11 @@ for (let i = 1; i <= 9; i++) {
     type: 'RM',
     openingStock: 10,
     reorderLevel: 10,
-    supplierId: supplier?.id ?? null,
+    suppliers: supplier ? [{ supplierId: supplier.id }] : [],
     location: `A-${i}`,
     netWeight: 0.5,
     grossWeight: 0.65,
     quantityPacked: 24,
-    packingBoxDetails: 'Carton 300x200x150'
   })
   rm[code] = item.id
 }
@@ -73,7 +73,6 @@ const { item: fg } = itemsRepo.create({
   netWeight: 12,
   grossWeight: 14.5,
   quantityPacked: 4,
-  packingBoxDetails: 'Wooden crate'
 })
 
 check('nine raw materials created', itemsRepo.count('RM') === 9, itemsRepo.count('RM'))
@@ -106,6 +105,102 @@ check('duplicate code on update is refused', (() => {
     return true
   }
 })())
+
+/* --------------------- many suppliers for one part --------------------- */
+
+const alt1 = suppliersRepo.create({ name: 'Alt Supplier One', leadTimeDays: 2 })
+const alt2 = suppliersRepo.create({ name: 'Alt Supplier Two', leadTimeDays: 9 })
+const multi = rm['RM-01']!
+
+check('the first supplier becomes preferred on its own', itemSuppliersRepo.preferredFor(multi) === s1.id)
+check('a second supplier can be added', itemSuppliersRepo.attach(multi, alt1.id, { unitPrice: 12.5, supplierSku: 'ALT-1' }).ok)
+check('a third supplier can be added', itemSuppliersRepo.attach(multi, alt2.id, { unitPrice: 11 }).ok)
+check('all three are listed', itemSuppliersRepo.forItem(multi).length === 3)
+check('adding more does not change the preferred one', itemSuppliersRepo.preferredFor(multi) === s1.id)
+check('exactly one is preferred', itemSuppliersRepo.forItem(multi).filter((l) => l.isPreferred).length === 1)
+check('the preferred one is listed first', itemSuppliersRepo.forItem(multi)[0]!.isPreferred)
+check('per-supplier price is kept', itemSuppliersRepo.forItem(multi).find((l) => l.supplierId === alt1.id)?.unitPrice === 12.5)
+check('their own part number is kept', itemSuppliersRepo.forItem(multi).find((l) => l.supplierId === alt1.id)?.supplierSku === 'ALT-1')
+check('a link lead time overrides the supplier default', (() => {
+  itemSuppliersRepo.update(itemSuppliersRepo.find(multi, alt2.id)!.id, { leadTimeDays: 1 })
+  return itemSuppliersRepo.forItem(multi).find((l) => l.supplierId === alt2.id)?.effectiveLeadTimeDays === 1
+})())
+check('without an override the supplier default is used',
+  itemSuppliersRepo.forItem(multi).find((l) => l.supplierId === alt1.id)?.effectiveLeadTimeDays === 2)
+
+check('re-attaching the same supplier updates rather than duplicating', (() => {
+  itemSuppliersRepo.attach(multi, alt1.id, { unitPrice: 13 })
+  const links = itemSuppliersRepo.forItem(multi)
+  return links.length === 3 && links.find((l) => l.supplierId === alt1.id)?.unitPrice === 13
+})())
+
+check('promoting another supplier demotes the incumbent', (() => {
+  itemSuppliersRepo.setPreferred(multi, alt1.id)
+  const links = itemSuppliersRepo.forItem(multi)
+  return links.filter((l) => l.isPreferred).length === 1 && itemSuppliersRepo.preferredFor(multi) === alt1.id
+})())
+check('the item row shows the preferred supplier', itemsRepo.get(multi)!.supplierName === 'Alt Supplier One')
+check('the item row counts every source', itemsRepo.get(multi)!.supplierCount === 3)
+
+check('removing the preferred one promotes another', (() => {
+  itemSuppliersRepo.detach(itemSuppliersRepo.find(multi, alt1.id)!.id)
+  const links = itemSuppliersRepo.forItem(multi)
+  return links.length === 2 && links.filter((l) => l.isPreferred).length === 1
+})())
+check('removing the last supplier leaves none preferred', (() => {
+  for (const link of itemSuppliersRepo.forItem(multi)) itemSuppliersRepo.detach(link.id)
+  return itemSuppliersRepo.forItem(multi).length === 0 && itemSuppliersRepo.preferredFor(multi) === null
+})())
+check('an item with no supplier reports none', itemsRepo.get(multi)!.supplierName === null)
+
+check('replaceFor sets the whole list at once', (() => {
+  itemSuppliersRepo.replaceFor(multi, [
+    { supplierId: alt2.id, unitPrice: 5 },
+    { supplierId: s1.id, isPreferred: true }
+  ])
+  const links = itemSuppliersRepo.forItem(multi)
+  return links.length === 2 && itemSuppliersRepo.preferredFor(multi) === s1.id
+})())
+check('replaceFor refuses the same supplier twice',
+  !itemSuppliersRepo.replaceFor(multi, [{ supplierId: s1.id }, { supplierId: s1.id }]).ok)
+check('replaceFor with no flag still leaves one preferred', (() => {
+  itemSuppliersRepo.replaceFor(multi, [{ supplierId: alt2.id }, { supplierId: s1.id }])
+  const links = itemSuppliersRepo.forItem(multi)
+  // No flag given, so the first in the list leads.
+  return links.filter((l) => l.isPreferred).length === 1 && itemSuppliersRepo.preferredFor(multi) === alt2.id
+})())
+// Put S-1 back in front, so the supplier-card checks below have a known shape.
+itemSuppliersRepo.setPreferred(multi, s1.id)
+check('an unknown supplier is refused', !itemSuppliersRepo.attach(multi, 'sp_nope').ok)
+check('an unknown item is refused', !itemSuppliersRepo.attach('it_nope', s1.id).ok)
+
+check('the supplier card lists their parts', (() => {
+  const detail = suppliersRepo.detail(s1.id)
+  return !!detail && detail.parts.some((p) => p.code === 'RM-01')
+})())
+check('the supplier card counts where they are preferred', (suppliersRepo.detail(s1.id)?.preferredCount ?? 0) >= 1)
+// No ledger entries yet at this point in the file, so stock is the opening balance.
+check('the supplier card carries live stock per part',
+  suppliersRepo.detail(s1.id)!.parts.find((p) => p.code === 'RM-01')!.currentStock === 10,
+  suppliersRepo.detail(s1.id)!.parts.find((p) => p.code === 'RM-01')!.currentStock)
+check('a supplier with no parts still returns a card', (() => {
+  const lonely = suppliersRepo.create({ name: 'Never Used Co' })
+  const detail = suppliersRepo.detail(lonely.id)
+  return !!detail && detail.parts.length === 0 && detail.outstanding.length === 0
+})())
+check('an unknown supplier has no card', suppliersRepo.detail('sp_nope') === null)
+
+check('item search matches the rack', (() => {
+  itemsRepo.update(rm['RM-02']!, { rack: 'RACK-77' })
+  return itemsRepo.list({ search: 'rack-77' }).total === 1
+})())
+check('items can be filtered to those with no supplier', itemsRepo.list({ noSupplier: true }).total > 0)
+check('the six item types are all accepted', (() => {
+  const types = ['WIP', 'BOUGHT_OUT', 'CONSUMABLE', 'ASSET'] as const
+  return types.every((t, i) => itemsRepo.create({ code: `TY-${i}`, name: t, type: t }).item.type === t)
+})())
+check('items can be filtered by several types at once',
+  itemsRepo.list({ types: ['CONSUMABLE', 'ASSET'] }).total === 2)
 
 /* ---------------------------------- bom --------------------------------- */
 
@@ -212,8 +307,11 @@ itemsRepo.setArchived(rm['RM-08']!, false)
 /* ------------------------------- dashboard ------------------------------ */
 
 const stats = statsRepo.dashboard()
-check('stats count items', stats.itemCount === 10, stats.itemCount)
-check('stats split RM and FG', stats.rmCount === 9 && stats.fgCount === 1)
+// 9 raw + 1 finished + the four added when checking the new types.
+check('stats count items', stats.itemCount === 14, stats.itemCount)
+const typeCount = (t: string) => stats.byType.find((x) => x.type === t)?.count ?? 0
+check('stats split by type', typeCount('RM') === 9 && typeCount('FG') === 1, stats.byType)
+check('stats only report types in use', stats.byType.every((t) => t.count > 0))
 check('stats count open orders', stats.openOrderCount === 1)
 check('stats report below-reorder items', stats.belowReorderCount > 0, stats.belowReorderCount)
 check('stats flag items with no reorder level', stats.noReorderLevelCount >= 1)

@@ -14,5 +14,7 @@ export const ids = {
   order: () => newId('or'),
   move: () => newId('mv'),
   plan: () => newId('pl'),
-  planLine: () => newId('pln')
+  planLine: () => newId('pln'),
+  itemSupplier: () => newId('isup'),
+  packingBox: () => newId('pbx')
 }

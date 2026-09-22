@@ -1,11 +1,14 @@
 import { app, dialog, ipcMain, shell, BrowserWindow } from 'electron'
 import { join } from 'node:path'
 import type { AppSettings, ItemQuery, MoveQuery, OrderQuery, OrderStatus, Supplier } from '@shared/types'
-import type { ItemDetail, ItemInput, MoveInput, OrderInput } from '@shared/api'
+import type { ItemDetail, ItemInput, MoveInput, NewSupplierInput, OrderInput, PhotoInput } from '@shared/api'
 import {
   bomRepo,
   getDbPath,
+  itemSuppliersRepo,
   itemsRepo,
+  packingBoxesRepo,
+  photosRepo,
   movesRepo,
   ordersRepo,
   plansRepo,
@@ -116,6 +119,16 @@ export function registerIpc(context: IpcContext): void {
   handle('suppliers:list', (search?: string) => suppliersRepo.list(search))
   handle('suppliers:get', (id: string) => suppliersRepo.get(id))
   handle('suppliers:itemCount', (id: string) => suppliersRepo.itemCount(id))
+  handle('suppliers:detail', (id: string) => suppliersRepo.detail(id))
+
+  handle('suppliers:exportPartsCsv', async (id: string) => {
+    const supplier = suppliersRepo.get(id)
+    if (!supplier) return { path: null }
+    const path = await saveAs(exporters.defaultNames.supplierParts(supplier.name))
+    if (!path) return { path: null }
+    exporters.exportSupplierParts(path, id)
+    return { path }
+  })
 
   handle('suppliers:create', (input: Partial<Supplier> & { name: string }) => {
     const supplier = suppliersRepo.create(input)
@@ -144,6 +157,7 @@ export function registerIpc(context: IpcContext): void {
   handle('items:get', (id: string) => itemsRepo.get(id))
   handle('items:byCode', (code: string) => itemsRepo.byCode(code))
   handle('items:locations', () => itemsRepo.locations())
+  handle('items:racks', () => itemsRepo.racks())
   handle('items:units', () => itemsRepo.units())
   handle('items:stockAsOf', (at: number) => itemsRepo.stockAsOf(at))
 
@@ -152,18 +166,23 @@ export function registerIpc(context: IpcContext): void {
     if (!item) return null
     return {
       item,
-      supplier: item.supplierId ? suppliersRepo.get(item.supplierId) : null,
+      suppliers: itemSuppliersRepo.forItem(id),
       componentsOf: bomRepo.list(id),
       usedIn: bomRepo.usedIn(id),
       recentMoves: movesRepo.forItem(id, 50),
       commitments: ordersRepo.commitmentsFor(id),
-      balanceHistory: itemsRepo.balanceHistory(id, 30)
+      balanceHistory: itemsRepo.balanceHistory(id, 30),
+      photo: photosRepo.full(id),
+      photoMeta: photosRepo.meta(id)
     }
   })
 
   handle('items:create', (input: ItemInput) => {
+    // Suppliers chosen on the form are linked by itemsRepo.create itself, so adding a
+    // part and recording who sells it is one save rather than two trips.
     const result = itemsRepo.create(input)
     notifyChanged('items')
+    notifyChanged('suppliers')
     return result
   })
 
@@ -172,6 +191,10 @@ export function registerIpc(context: IpcContext): void {
     notifyChanged('items')
     // Opening stock feeds every derived quantity, and the BOM view shows item names.
     notifyChanged('bom')
+    if (patch.suppliers) {
+      notifyChanged('suppliers')
+      notifyChanged('purchasing')
+    }
     return item
   })
 
@@ -185,6 +208,107 @@ export function registerIpc(context: IpcContext): void {
     const result = itemsRepo.remove(id)
     if (result.ok) notifyChanged('items')
     return result
+  })
+
+  /* ---------------------- suppliers for a part ---------------------- */
+
+  handle('items:suppliers', (itemId: string) => itemSuppliersRepo.forItem(itemId))
+
+  handle(
+    'items:attachSupplier',
+    (
+      itemId: string,
+      supplierId: string,
+      details?: { supplierSku?: string | null; unitPrice?: number | null; leadTimeDays?: number | null; isPreferred?: boolean }
+    ) => {
+      const result = itemSuppliersRepo.attach(itemId, supplierId, details ?? {})
+      if (result.ok) {
+        notifyChanged('items')
+        notifyChanged('suppliers')
+        notifyChanged('purchasing')
+      }
+      return result
+    }
+  )
+
+  handle(
+    'items:updateSupplierLink',
+    (linkId: string, patch: { supplierSku?: string | null; unitPrice?: number | null; leadTimeDays?: number | null; isPreferred?: boolean }) => {
+      const result = itemSuppliersRepo.update(linkId, patch)
+      if (result.ok) {
+        notifyChanged('items')
+        notifyChanged('suppliers')
+        notifyChanged('purchasing')
+      }
+      return result
+    }
+  )
+
+  handle('items:detachSupplier', (linkId: string) => {
+    const result = itemSuppliersRepo.detach(linkId)
+    if (result.ok) {
+      notifyChanged('items')
+      notifyChanged('suppliers')
+      notifyChanged('purchasing')
+    }
+    return result
+  })
+
+  handle('items:setPreferredSupplier', (itemId: string, supplierId: string) => {
+    const result = itemSuppliersRepo.setPreferred(itemId, supplierId)
+    if (result.ok) {
+      notifyChanged('items')
+      notifyChanged('suppliers')
+      // Which supplier a shortage is grouped under has just changed.
+      notifyChanged('purchasing')
+    }
+    return result
+  })
+
+  /** Creates the supplier and links it in one call, for the inline form. */
+  handle(
+    'items:createAndAttachSupplier',
+    (
+      itemId: string,
+      supplier: NewSupplierInput,
+      details?: { supplierSku?: string | null; unitPrice?: number | null; leadTimeDays?: number | null }
+    ) => {
+      if (!supplier?.name?.trim()) return { ok: false, supplier: null, error: 'A supplier name is required' }
+      // `create` returns the existing row when the name already exists, so typing a
+      // known supplier's name inline reuses it instead of making a near-duplicate.
+      const created = suppliersRepo.create(supplier as never)
+      const linked = itemSuppliersRepo.attach(itemId, created.id, details ?? {})
+      if (!linked.ok) return { ok: false, supplier: null, error: linked.error }
+      notifyChanged('items')
+      notifyChanged('suppliers')
+      notifyChanged('purchasing')
+      return { ok: true, supplier: created }
+    }
+  )
+
+  /* ------------------------------ item photo ------------------------------ */
+
+  handle('items:photo', (itemId: string) => photosRepo.full(itemId))
+
+  handle('items:setPhoto', (input: PhotoInput) => {
+    // The renderer has already downscaled both copies with a canvas; this side only
+    // decodes and stores them.
+    const result = photosRepo.set({
+      itemId: input.itemId,
+      mime: input.mime,
+      thumb: Buffer.from(input.thumbBase64, 'base64'),
+      full: Buffer.from(input.fullBase64, 'base64'),
+      width: input.width,
+      height: input.height
+    })
+    if (result.ok) notifyChanged('items')
+    return result
+  })
+
+  handle('items:removePhoto', (itemId: string) => {
+    const ok = photosRepo.remove(itemId)
+    if (ok) notifyChanged('items')
+    return ok
   })
 
   handle('items:exportCsv', async () => {
@@ -396,6 +520,46 @@ export function registerIpc(context: IpcContext): void {
     if (!path) return { path: null }
     exporters.exportPurchasing(path)
     return { path }
+  })
+
+  /* ------------------------------- editables ------------------------------ */
+
+  handle('editables:boxes:list', (includeArchived?: boolean) => packingBoxesRepo.list(!!includeArchived))
+  handle('editables:boxes:itemsIn', (id: string) => packingBoxesRepo.itemsIn(id))
+
+  handle('editables:boxes:create', (input: Parameters<typeof packingBoxesRepo.create>[0]) => {
+    const result = packingBoxesRepo.create(input)
+    if (result.ok) {
+      notifyChanged('editables')
+      notifyChanged('items')
+    }
+    return result
+  })
+
+  handle('editables:boxes:update', (id: string, patch: Parameters<typeof packingBoxesRepo.update>[1]) => {
+    const result = packingBoxesRepo.update(id, patch)
+    if (result.ok) {
+      notifyChanged('editables')
+      // The label shows on item rows and packing reports.
+      notifyChanged('items')
+      notifyChanged('orders')
+    }
+    return result
+  })
+
+  handle('editables:boxes:remove', (id: string) => {
+    const result = packingBoxesRepo.remove(id)
+    if (result.ok) {
+      notifyChanged('editables')
+      notifyChanged('items')
+    }
+    return result
+  })
+
+  handle('editables:boxes:reorder', (orderedIds: string[]) => {
+    const boxes = packingBoxesRepo.reorder(orderedIds)
+    notifyChanged('editables')
+    return boxes
   })
 
   /* ------------------------------- locations ------------------------------ */

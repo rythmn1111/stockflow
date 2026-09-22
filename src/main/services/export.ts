@@ -6,6 +6,7 @@ import { movesRepo } from '../db/moves'
 import { ordersRepo } from '../db/orders'
 import { plansRepo } from '../db/plans'
 import { settingsRepo } from '../db/settings'
+import { suppliersRepo } from '../db/suppliers'
 import { purchaseSuggestions } from './planning'
 import { pickListFor } from './packing'
 import { round } from '../lib/num'
@@ -55,7 +56,8 @@ export const defaultNames = {
   ledger: () => `material-log-${stamp()}.csv`,
   plan: (orderNo: string) => `material-plan-${orderNo}-${stamp()}.csv`,
   pickList: (orderNo: string) => `pick-list-${orderNo}-${stamp()}.csv`,
-  purchasing: () => `purchase-list-${stamp()}.csv`
+  purchasing: () => `purchase-list-${stamp()}.csv`,
+  supplierParts: (name: string) => `${name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-parts-${stamp()}.csv`
 }
 
 /**
@@ -71,18 +73,44 @@ export function exportItems(path: string): number {
     [
       'Item Code', 'Item Name', 'Unit', 'Type', 'Opening', 'Inward', 'Outward',
       'Current Stock', 'Committed', 'Free Stock', 'Reorder Level', 'Below Reorder',
-      'Location', 'Supplier', 'Net Weight', 'Gross Weight', 'Packing Box Details',
-      'Qty Packed', 'Used In BOMs', 'Last Movement'
+      'Location', 'Rack', 'Preferred Supplier', 'Suppliers', 'Net Weight', 'Gross Weight',
+      'Packing Box', 'Qty Packed', 'Used In BOMs', 'Last Movement'
     ],
     items.map((i) => [
       i.code, i.name, i.unit, i.type, i.openingStock, i.totalInward, i.totalOutward,
       i.currentStock, i.committed, i.freeStock, i.reorderLevel, i.belowReorder ? 'YES' : '',
-      i.location, i.supplierName, i.netWeight, i.grossWeight, i.packingBoxDetails,
-      i.quantityPacked, i.usedInBomCount,
+      i.location, i.rack, i.supplierName, i.supplierCount, i.netWeight, i.grossWeight,
+      i.packingBoxLabel, i.quantityPacked, i.usedInBomCount,
       i.lastMovedAt ? new Date(i.lastMovedAt).toLocaleDateString() : ''
     ])
   )
   return items.length
+}
+
+/** One supplier's parts list — what they sell us, and where each one stands. */
+export function exportSupplierParts(path: string, supplierId: string): number {
+  const detail = suppliersRepo.detail(supplierId)
+  if (!detail) return 0
+
+  const prefix = heading(`Parts from ${detail.supplier.name}`)
+  prefix.splice(prefix.length - 1, 0,
+    [detail.supplier.contact ?? detail.supplier.phone ?? ''],
+    [`${detail.parts.length} part(s), ${detail.preferredCount} as preferred source`],
+    ['']
+  )
+
+  write(
+    path,
+    prefix,
+    ['Item Code', 'Item Name', 'Type', 'Their SKU', 'Unit Price', 'Lead Time', 'Preferred', 'Free Stock', 'Reorder Level', 'Location', 'Rack'],
+    detail.parts.map((p) => [
+      p.code, p.name, p.type, p.supplierSku, p.unitPrice,
+      p.effectiveLeadTimeDays != null ? `${p.effectiveLeadTimeDays} days` : '',
+      p.isPreferredSource ? 'YES' : '',
+      p.freeStock, p.reorderLevel, p.location, p.rack
+    ])
+  )
+  return detail.parts.length
 }
 
 export function exportBom(path: string): number {
@@ -140,7 +168,9 @@ export function exportPlan(path: string, orderId: string): number {
     plan.lines.map((l) => [
       l.depth, l.rmCode, l.rmName, l.rmUnit, l.qtyRequired, l.alreadyIssued,
       l.stockAvailable, l.shortage || '',
-      itemsRepo.getPlain(l.rmItemId)?.location ?? '',
+      [itemsRepo.getPlain(l.rmItemId)?.location, itemsRepo.getPlain(l.rmItemId)?.rack]
+        .filter(Boolean)
+        .join(' / '),
       l.supplierName, l.supplierContact ?? l.supplierPhone
     ])
   )

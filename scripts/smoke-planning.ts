@@ -44,7 +44,7 @@ for (const code of Object.keys(bomQty)) {
     type: 'RM',
     openingStock: 10,
     reorderLevel: 10,
-    supplierId: supplier?.id ?? null,
+    suppliers: supplier ? [{ supplierId: supplier.id }] : [],
     location: `A-${index}`
   })
   rm[code] = item.id

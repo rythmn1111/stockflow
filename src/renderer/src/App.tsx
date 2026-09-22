@@ -19,6 +19,7 @@ import { LedgerPage } from '@/pages/ledger'
 import { PurchasingPage } from '@/pages/purchasing'
 import { LocationsPage } from '@/pages/locations'
 import { SuppliersPage } from '@/pages/suppliers'
+import { EditablesPage } from '@/pages/editables'
 import { SettingsPage } from '@/pages/settings'
 import { useLiveUpdates, useSettings } from '@/hooks/use-data'
 import { setTheme } from '@/hooks/use-theme'
@@ -36,6 +37,7 @@ function AppRoutes(): React.JSX.Element {
         <Route path="/purchasing" element={<PurchasingPage />} />
         <Route path="/locations" element={<LocationsPage />} />
         <Route path="/suppliers" element={<SuppliersPage />} />
+        <Route path="/editables" element={<EditablesPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
@@ -82,6 +84,9 @@ function NavBridge(): null {
           break
         case 'suppliers':
           navigate('/suppliers')
+          break
+        case 'editables':
+          navigate('/editables')
           break
         case 'settings':
           navigate('/settings')

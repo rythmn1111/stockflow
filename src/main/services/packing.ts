@@ -19,7 +19,8 @@ import { atLeastZero, round } from '../lib/num'
 
 /** Boxes and weight for a given quantity of one item. */
 export function packingFor(itemId: string, qty: number): PackingBreakdown | null {
-  const item = itemsRepo.getPlain(itemId)
+  // The with-stock shape carries the chosen box's label and tare weight.
+  const item = itemsRepo.get(itemId)
   if (!item) return null
 
   const unitsPerBox = item.quantityPacked && item.quantityPacked > 0 ? item.quantityPacked : null
@@ -36,7 +37,7 @@ export function packingFor(itemId: string, qty: number): PackingBreakdown | null
     unit: item.unit,
     qty: round(qty),
     unitsPerBox,
-    boxDetails: item.packingBoxDetails,
+    boxDetails: item.packingBoxLabel,
     fullBoxes,
     loose,
     // A part-filled carton still costs a carton, hence the ceiling.
@@ -46,7 +47,12 @@ export function packingFor(itemId: string, qty: number): PackingBreakdown | null
     // Gross below net is a data-entry slip, not negative packaging, so it is suppressed.
     packagingWeightPerUnit: net != null && gross != null && gross >= net ? round(gross - net, 3) : null,
     totalNetWeight: net != null ? round(net * qty, 3) : null,
-    totalGrossWeight: gross != null ? round(gross * qty, 3) : null
+    totalGrossWeight: gross != null ? round(gross * qty, 3) : null,
+    // The cartons themselves weigh something, which matters for a freight quote.
+    boxesWeight:
+      item.packingBoxEmptyWeight != null && unitsPerBox
+        ? round(item.packingBoxEmptyWeight * Math.ceil(qty / unitsPerBox), 3)
+        : null
   }
 }
 
@@ -63,7 +69,7 @@ export function orderPacking(orderId: string): OrderPacking | null {
   if (finished.unitsPerBox == null) gaps.push('Quantity Packed is not set, so carton count is unknown')
   if (finished.netWeightPerUnit == null) gaps.push('Net Weight is not set')
   if (finished.grossWeightPerUnit == null) gaps.push('Gross Weight is not set')
-  if (!finished.boxDetails) gaps.push('Packing Box Details is empty')
+  if (!finished.boxDetails) gaps.push('No packing box chosen')
 
   return {
     orderId: order.id,
@@ -148,6 +154,7 @@ export function pickListFor(orderId: string): PickList | null {
       name: line.rmName,
       unit: line.rmUnit,
       location: item?.location ?? null,
+      rack: item?.rack ?? null,
       qtyToPick: outstanding,
       onHand: round(onHand),
       shortfall
@@ -165,8 +172,13 @@ export function pickListFor(orderId: string): PickList | null {
   const stops = [...byLocation.entries()]
     .map(([location, lines]) => ({
       location,
-      // Within a stop, by code: predictable and matches how shelves are labelled.
-      lines: lines.sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true })),
+      // Within a location, by rack first so the walk goes along the shelves in order,
+      // then by code. Numeric-aware, so rack 2 comes before rack 10.
+      lines: lines.sort(
+        (a, b) =>
+          (a.rack ?? '').localeCompare(b.rack ?? '', undefined, { numeric: true }) ||
+          a.code.localeCompare(b.code, undefined, { numeric: true })
+      ),
       lineCount: lines.length
     }))
     // Numeric-aware so bin A-2 comes before A-10, which plain text gets wrong.

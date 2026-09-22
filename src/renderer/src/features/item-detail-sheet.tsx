@@ -3,6 +3,7 @@ import { Area, AreaChart, ResponsiveContainer, Tooltip as ChartTooltip, YAxis } 
 import {
   ArchiveIcon,
   ArrowDownUpIcon,
+  BoxIcon,
   MapPinIcon,
   PackageIcon,
   PencilIcon,
@@ -26,7 +27,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle
 } from '@/components/ui/alert-dialog'
-import { DirectionIcon, ItemCode, ItemTypeBadge } from '@/components/stock-bits'
+import { DirectionIcon, ItemCode, ItemTypeBadge, PreferredBadge } from '@/components/stock-bits'
 import { qk } from '@/lib/query-keys'
 import { formatDate, formatDateTime, formatQty, formatRelative, formatWeight, MOVE_REASON_LABELS, pluralise } from '@/lib/format'
 import { useAppMutation, useItemDetail } from '@/hooks/use-data'
@@ -95,6 +96,14 @@ export function ItemDetailSheet({
             </SheetHeader>
 
             <div className="space-y-4 px-4 pb-6">
+              {detail.photo && (
+                <img
+                  src={detail.photo}
+                  alt={item.code}
+                  className="max-h-56 w-full rounded-lg border object-contain bg-muted/20"
+                />
+              )}
+
               {/* --- the numbers, and the arithmetic behind them --- */}
               <div className="rounded-lg border p-3">
                 <div className="grid grid-cols-3 gap-3 text-center">
@@ -201,10 +210,20 @@ export function ItemDetailSheet({
                   icon={MapPinIcon}
                   hint={item.location ? undefined : 'Set one to group pick lists'}
                 />
-                <Field label="Supplier" value={detail.supplier?.name} icon={TruckIcon} />
                 <Field
-                  label="Supplier contact"
-                  value={detail.supplier?.contact ?? detail.supplier?.phone}
+                  label="Preferred supplier"
+                  value={detail.suppliers.find((s) => s.isPreferred)?.supplierName}
+                  icon={TruckIcon}
+                  hint="No supplier recorded"
+                />
+                <Field
+                  label="Other sources"
+                  value={
+                    detail.suppliers.length > 1
+                      ? detail.suppliers.filter((s) => !s.isPreferred).map((s) => s.supplierName).join(', ')
+                      : null
+                  }
+                  hint={detail.suppliers.length === 1 ? 'Only one source' : '—'}
                 />
                 <Field label="Net weight" value={formatWeight(item.netWeight)} icon={ScaleIcon} />
                 <Field label="Gross weight" value={formatWeight(item.grossWeight)} />
@@ -214,7 +233,8 @@ export function ItemDetailSheet({
                   icon={PackageIcon}
                   hint={item.quantityPacked == null ? 'Set to get carton counts' : undefined}
                 />
-                <Field label="Box details" value={item.packingBoxDetails} />
+                <Field label="Packing box" value={item.packingBoxLabel} icon={BoxIcon} />
+                <Field label="Rack" value={item.rack} hint="No rack set" />
                 <Field label="Last movement" value={item.lastMovedAt ? formatRelative(item.lastMovedAt) : 'never'} />
                 <Field label="Used in" value={item.usedInBomCount > 0 ? pluralise(item.usedInBomCount, 'product') : null} />
               </div>
@@ -230,6 +250,9 @@ export function ItemDetailSheet({
                 <TabsList className="w-full">
                   <TabsTrigger value="ledger" className="flex-1 text-xs">
                     Ledger ({detail.recentMoves.length})
+                  </TabsTrigger>
+                  <TabsTrigger value="suppliers" className="flex-1 text-xs">
+                    Suppliers ({detail.suppliers.length})
                   </TabsTrigger>
                   <TabsTrigger value="bom" className="flex-1 text-xs">
                     Bill of materials
@@ -276,6 +299,33 @@ export function ItemDetailSheet({
                           {move.voidedAt && (
                             <p className="text-[11px] text-destructive">Voided: {move.voidedReason}</p>
                           )}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </TabsContent>
+
+                <TabsContent value="suppliers" className="mt-3 space-y-1.5">
+                  {detail.suppliers.length === 0 ? (
+                    <p className="py-6 text-center text-sm text-muted-foreground">
+                      No supplier recorded, so this part can never appear on a purchase list. Add one by editing the
+                      item.
+                    </p>
+                  ) : (
+                    detail.suppliers.map((link) => (
+                      <div key={link.id} className="rounded-md border px-2.5 py-2 text-sm">
+                        <div className="flex items-center gap-2">
+                          <span className="min-w-0 flex-1 truncate font-medium">{link.supplierName}</span>
+                          {link.isPreferred && <PreferredBadge />}
+                        </div>
+                        <div className="mt-0.5 flex flex-wrap gap-x-3 text-[11px] text-muted-foreground">
+                          {link.supplierSku && <span>their no. {link.supplierSku}</span>}
+                          {link.unitPrice != null && <span>{link.unitPrice.toLocaleString()} per {item.unit}</span>}
+                          {link.effectiveLeadTimeDays != null && (
+                            <span>{pluralise(link.effectiveLeadTimeDays, 'day')} lead</span>
+                          )}
+                          {link.supplierContact && <span>{link.supplierContact}</span>}
+                          {link.supplierPhone && <span>{link.supplierPhone}</span>}
                         </div>
                       </div>
                     ))

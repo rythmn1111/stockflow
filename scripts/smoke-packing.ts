@@ -14,6 +14,7 @@ import { bomRepo } from '../src/main/db/bom'
 import { ordersRepo } from '../src/main/db/orders'
 import { movesRepo } from '../src/main/db/moves'
 import { planOrder } from '../src/main/services/planning'
+import { packingBoxesRepo } from '../src/main/db/packing-boxes'
 import { locationSummaries, orderPacking, packingFor, pickListFor, weightRollup } from '../src/main/services/packing'
 
 let failures = 0
@@ -26,6 +27,27 @@ function check(label: string, condition: unknown, extra?: unknown): void {
 const dir = mkdtempSync(join(tmpdir(), 'stockflow-pack-'))
 openDatabase(dir)
 
+/* --------------------- the editable box list ---------------------- */
+
+const carton = packingBoxesRepo.create({
+  label: 'Carton 300×200×150',
+  lengthMm: 300,
+  widthMm: 200,
+  heightMm: 150,
+  emptyWeight: 0.12
+})
+check('a box can be added to the list', carton.ok && !!carton.box)
+check('adding the same label twice is refused', !packingBoxesRepo.create({ label: 'Carton 300×200×150' }).ok)
+check('the label is matched case-insensitively', !packingBoxesRepo.create({ label: 'carton 300×200×150' }).ok)
+check('a box can be named from its dimensions alone', (() => {
+  const auto = packingBoxesRepo.create({ label: '', lengthMm: 100, widthMm: 100, heightMm: 50 })
+  return auto.ok && auto.box?.label === '100×100×50 mm'
+})())
+check('a box with neither name nor dimensions is refused', !packingBoxesRepo.create({ label: '   ' }).ok)
+
+/* -------------------- a box in use cannot be deleted -------------------- */
+// (checked after an item is pointed at it, further down)
+
 /* -------------------------------- packing ------------------------------- */
 
 const { item: boxed } = itemsRepo.create({
@@ -34,7 +56,7 @@ const { item: boxed } = itemsRepo.create({
   unit: 'Nos.',
   type: 'FG',
   quantityPacked: 24,
-  packingBoxDetails: 'Carton 300×200×150',
+  packingBoxId: carton.box!.id,
   netWeight: 0.5,
   grossWeight: 0.65
 })
@@ -50,7 +72,9 @@ check('net weight scales with quantity', partial.totalNetWeight === 25)
 check('gross weight scales with quantity', partial.totalGrossWeight === 32.5)
 check('packaging weight is gross minus net', partial.packagingWeightPerUnit === 0.15,
   partial.packagingWeightPerUnit)
-check('box details are carried through', partial.boxDetails === 'Carton 300×200×150')
+check('the chosen box name comes through', partial.boxDetails === 'Carton 300×200×150')
+// Three cartons at 0.12 kg each: the packaging is part of what ships.
+check('the cartons\' own weight is counted', partial.boxesWeight === 0.36, partial.boxesWeight)
 
 const single = packingFor(boxed.id, 1)!
 check('one unit still needs one box', single.totalBoxes === 1 && single.fullBoxes === 0 && single.loose === 1)
@@ -155,6 +179,53 @@ itemsRepo.update(light.id, { openingStock: 5 })
 planOrder(oAsm.id)
 const shortPick = pickListFor(oAsm.id)!
 check('a line the shelf cannot cover is flagged', shortPick.shortfallLines === 1, shortPick.shortfallLines)
+
+/* ------------------------- box list guard rails ------------------------- */
+
+check('a box in use cannot be deleted', !packingBoxesRepo.remove(carton.box!.id).ok)
+check('and the refusal says how many items use it', /1 item/.test(packingBoxesRepo.remove(carton.box!.id).error ?? ''))
+check('an unused box can be deleted', (() => {
+  const spare = packingBoxesRepo.create({ label: 'Spare crate' })
+  return packingBoxesRepo.remove(spare.box!.id).ok
+})())
+check('archiving hides a box from the list but keeps it on its items', (() => {
+  packingBoxesRepo.update(carton.box!.id, { archived: true })
+  const hidden = !packingBoxesRepo.list().some((b) => b.id === carton.box!.id)
+  const stillOnItem = itemsRepo.get(boxed.id)!.packingBoxLabel === 'Carton 300×200×150'
+  packingBoxesRepo.update(carton.box!.id, { archived: false })
+  return hidden && stillOnItem
+})())
+check('the list reports how many items use each box',
+  packingBoxesRepo.list().find((b) => b.id === carton.box!.id)?.itemCount === 1)
+check('renaming a box updates every item that shows it', (() => {
+  packingBoxesRepo.update(carton.box!.id, { label: 'Carton A' })
+  const renamed = itemsRepo.get(boxed.id)!.packingBoxLabel === 'Carton A'
+  packingBoxesRepo.update(carton.box!.id, { label: 'Carton 300×200×150' })
+  return renamed
+})())
+
+/* --------------------------- rack ordering --------------------------- */
+
+// Its own items and order, so issuing earlier in this file cannot remove a line and
+// so the location summary below still sees more than one location.
+const rackIds = ['R-10', 'R-2', 'R-1'].map((rack, i) => {
+  const { item } = itemsRepo.create({
+    code: `RK-${i}`, name: `Racked ${rack}`, type: 'RM', openingStock: 500, location: 'Z-STORE', rack
+  })
+  return item.id
+})
+const { item: rackFg } = itemsRepo.create({ code: 'FG-RACK', name: 'Rack test', type: 'FG' })
+for (const id of rackIds) bomRepo.addLine({ fgItemId: rackFg.id, rmItemId: id, qtyPerUnit: 1 })
+const { order: oRack } = ordersRepo.create({
+  orderNo: 'RK-1', orderDate: Date.now(), fgItemId: rackFg.id, qtyOrdered: 1
+})
+planOrder(oRack.id)
+const racked = pickListFor(oRack.id)!
+check('one location means one stop', racked.stops.length === 1, racked.stops.length)
+check('within a stop the walk follows rack order, numerically',
+  racked.stops[0]!.lines.map((l) => l.rack).join(',') === 'R-1,R-2,R-10',
+  racked.stops[0]!.lines.map((l) => l.rack))
+check('the rack is carried on each pick line', racked.stops[0]!.lines.every((l) => !!l.rack))
 
 /* --------------------------- location summary --------------------------- */
 

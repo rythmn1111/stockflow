@@ -7,7 +7,8 @@ import {
   ClipboardListIcon,
   PackageXIcon,
   ShoppingCartIcon,
-  TrendingDownIcon
+  TrendingDownIcon,
+  TruckIcon
 } from 'lucide-react'
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -61,7 +62,7 @@ export function DashboardPage(): React.JSX.Element {
     {
       label: 'Items',
       value: String(stats.itemCount),
-      hint: `${stats.rmCount} raw · ${stats.fgCount} finished`,
+      hint: stats.byType.map((t) => `${t.count} ${t.label.toLowerCase()}`).join(' · ') || 'none yet',
       icon: BoxesIcon,
       onClick: () => navigate('/items')
     },
@@ -138,7 +139,7 @@ export function DashboardPage(): React.JSX.Element {
       </div>
 
       {/* Data-integrity warnings: quiet when there is nothing wrong. */}
-      {(stats.negativeStockCount > 0 || stats.orphanItemCount > 0) && (
+      {(stats.negativeStockCount > 0 || stats.orphanItemCount > 0 || stats.itemsWithoutSupplier > 0) && (
         <div className="flex flex-wrap gap-2">
           {stats.negativeStockCount > 0 && (
             <button
@@ -150,6 +151,19 @@ export function DashboardPage(): React.JSX.Element {
             >
               <PackageXIcon className="size-3.5" />
               {pluralise(stats.negativeStockCount, 'item')} at negative stock
+              <ArrowRightIcon className="size-3" />
+            </button>
+          )}
+          {stats.itemsWithoutSupplier > 0 && (
+            <button
+              onClick={() => {
+                setItemFilters({ noSupplier: true, stockFilter: 'all' })
+                navigate('/items')
+              }}
+              className="flex items-center gap-2 rounded-md border bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-foreground/20"
+            >
+              <TruckIcon className="size-3.5" />
+              {pluralise(stats.itemsWithoutSupplier, 'item')} with no supplier — they cannot reach a purchase list
               <ArrowRightIcon className="size-3" />
             </button>
           )}

@@ -1,4 +1,5 @@
 import type { DashboardStats } from '@shared/types'
+import { ITEM_TYPES } from '@shared/types'
 import { queryOne } from './connection'
 import { itemsRepo } from './items'
 import { movesRepo } from './moves'
@@ -40,9 +41,18 @@ export const statsRepo = {
 
     return {
       itemCount: itemsRepo.count(),
-      rmCount: itemsRepo.count('RM'),
-      fgCount: itemsRepo.count('FG'),
+      // Only types actually in use are reported, so a shop that never holds assets is
+      // not shown a permanent zero.
+      byType: ITEM_TYPES.map((t) => ({ type: t.value, label: t.label, count: itemsRepo.count(t.value) })).filter(
+        (t) => t.count > 0
+      ),
       supplierCount: suppliersRepo.list().length,
+      itemsWithoutSupplier: count(
+        `SELECT COUNT(*) AS c ${stockJoin} AND NOT EXISTS (SELECT 1 FROM item_suppliers x WHERE x.item_id = i.id)`
+      ),
+      itemsWithAlternateSuppliers: count(
+        `SELECT COUNT(*) AS c ${stockJoin} AND (SELECT COUNT(*) FROM item_suppliers x WHERE x.item_id = i.id) > 1`
+      ),
       belowReorderCount,
       negativeStockCount: movesRepo.negativeStockCount(),
       noReorderLevelCount: count(`SELECT COUNT(*) AS c ${stockJoin} AND i.reorder_level <= 0`),

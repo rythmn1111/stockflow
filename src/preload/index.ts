@@ -34,7 +34,9 @@ const api: StockFlowApi & { theme: { set: (theme: 'light' | 'dark' | 'system') =
     create: (input) => invoke('suppliers:create', input),
     update: (id, patch) => invoke('suppliers:update', id, patch),
     remove: (id) => invoke('suppliers:remove', id),
-    itemCount: (id) => invoke('suppliers:itemCount', id)
+    itemCount: (id) => invoke('suppliers:itemCount', id),
+    detail: (id) => invoke('suppliers:detail', id),
+    exportPartsCsv: (id) => invoke('suppliers:exportPartsCsv', id)
   },
 
   items: {
@@ -47,9 +49,33 @@ const api: StockFlowApi & { theme: { set: (theme: 'light' | 'dark' | 'system') =
     setArchived: (id, archived) => invoke('items:setArchived', id, archived),
     remove: (id) => invoke('items:remove', id),
     locations: () => invoke('items:locations'),
+    racks: () => invoke('items:racks'),
     units: () => invoke('items:units'),
     stockAsOf: (at) => invoke('items:stockAsOf', at),
-    exportCsv: () => invoke('items:exportCsv')
+    exportCsv: () => invoke('items:exportCsv'),
+
+    suppliers: (itemId) => invoke('items:suppliers', itemId),
+    attachSupplier: (itemId, supplierId, details) => invoke('items:attachSupplier', itemId, supplierId, details),
+    updateSupplierLink: (linkId, patch) => invoke('items:updateSupplierLink', linkId, patch),
+    detachSupplier: (linkId) => invoke('items:detachSupplier', linkId),
+    setPreferredSupplier: (itemId, supplierId) => invoke('items:setPreferredSupplier', itemId, supplierId),
+    createAndAttachSupplier: (itemId, supplier, details) =>
+      invoke('items:createAndAttachSupplier', itemId, supplier, details),
+
+    photo: (itemId) => invoke('items:photo', itemId),
+    setPhoto: (input) => invoke('items:setPhoto', input),
+    removePhoto: (itemId) => invoke('items:removePhoto', itemId)
+  },
+
+  editables: {
+    packingBoxes: {
+      list: (includeArchived) => invoke('editables:boxes:list', includeArchived),
+      create: (input) => invoke('editables:boxes:create', input),
+      update: (id, patch) => invoke('editables:boxes:update', id, patch),
+      remove: (id) => invoke('editables:boxes:remove', id),
+      reorder: (orderedIds) => invoke('editables:boxes:reorder', orderedIds),
+      itemsIn: (id) => invoke('editables:boxes:itemsIn', id)
+    }
   },
 
   bom: {

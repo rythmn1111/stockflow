@@ -58,7 +58,8 @@ const JOIN_SQL = `
     FROM bom_lines b
     JOIN items fg         ON fg.id = b.fg_item_id
     JOIN items rm         ON rm.id = b.rm_item_id
-    LEFT JOIN suppliers s ON s.id = rm.supplier_id`
+    LEFT JOIN item_suppliers rmsup ON rmsup.item_id = rm.id AND rmsup.is_preferred = 1
+    LEFT JOIN suppliers s          ON s.id = rmsup.supplier_id`
 
 export interface ExplodedLine {
   itemId: string

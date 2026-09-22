@@ -4,6 +4,7 @@ import {
   ClipboardListIcon,
   FactoryIcon,
   LayoutDashboardIcon,
+  ListIcon,
   MapPinIcon,
   ScrollTextIcon,
   SettingsIcon,
@@ -36,7 +37,8 @@ export function Sidebar(): React.JSX.Element {
       badgeTone: 'destructive' as const
     },
     { to: '/locations', label: 'Locations', icon: MapPinIcon },
-    { to: '/suppliers', label: 'Suppliers', icon: TruckIcon }
+    { to: '/suppliers', label: 'Suppliers', icon: TruckIcon },
+    { to: '/editables', label: 'Editables', icon: ListIcon }
   ]
 
   return (

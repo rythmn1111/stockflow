@@ -1,6 +1,8 @@
-import type { Supplier } from '@shared/types'
+import type { Supplier, SupplierDetail } from '@shared/types'
 import { query, queryOne, run } from './connection'
 import { ids } from '../lib/ids'
+import { itemSuppliersRepo } from './item-suppliers'
+import { round } from '../lib/num'
 
 interface SupplierRow {
   id: string
@@ -132,7 +134,111 @@ export const suppliersRepo = {
   },
 
   itemCount(id: string): number {
-    return queryOne<{ c: number }>('SELECT COUNT(*) AS c FROM items WHERE supplier_id = ?', [id])?.c ?? 0
+    return itemSuppliersRepo.itemCountFor(id)
+  },
+
+  /**
+   * The supplier card. The workbook repeated a supplier's name on every item row, so
+   * "which parts does this supplier give us, and what are they holding up right now?"
+   * required reading the whole sheet and doing it by eye.
+   */
+  detail(id: string): SupplierDetail | null {
+    const supplier = suppliersRepo.get(id)
+    if (!supplier) return null
+
+    const parts = itemSuppliersRepo.forSupplier(id)
+
+    // Shortages this supplier is the *preferred* source for — the ones that would
+    // actually appear on their purchase order.
+    const outstanding = query<{
+      item_id: string
+      code: string
+      name: string
+      unit: string
+      shortage: number
+      order_nos: string
+      earliest_due: number | null
+      link_lead: number | null
+    }>(
+      `SELECT pl.rm_item_id AS item_id, i.code, i.name, i.unit,
+              SUM(pl.shortage)                AS shortage,
+              group_concat(DISTINCT o.order_no) AS order_nos,
+              MIN(o.due_date)                 AS earliest_due,
+              MAX(isup.lead_time_days)        AS link_lead
+         FROM plan_lines pl
+         JOIN plans p     ON p.id = pl.plan_id AND p.superseded_at IS NULL
+         JOIN orders o    ON o.id = p.order_id
+         JOIN items i     ON i.id = pl.rm_item_id
+         JOIN item_suppliers isup ON isup.item_id = i.id AND isup.supplier_id = ? AND isup.is_preferred = 1
+        WHERE o.status IN ('draft','planned','in_production') AND pl.shortage > 0
+        GROUP BY pl.rm_item_id
+        ORDER BY SUM(pl.shortage) DESC`,
+      [id]
+    ).map((r) => {
+      const lead = r.link_lead ?? supplier.leadTimeDays ?? 0
+      return {
+        itemId: r.item_id,
+        code: r.code,
+        name: r.name,
+        unit: r.unit,
+        shortage: round(r.shortage),
+        orderNos: (r.order_nos ?? '').split(',').filter(Boolean),
+        orderByDate: r.earliest_due != null ? r.earliest_due - lead * 86_400_000 : null
+      }
+    })
+
+    // Only meaningful where a price is recorded, so a partial answer is not implied
+    // to be the whole bill.
+    const priced = outstanding.filter((line) => {
+      const link = parts.find((p) => p.itemId === line.itemId)
+      return link?.unitPrice != null
+    })
+    const outstandingValue = priced.length
+      ? round(
+          priced.reduce((sum, line) => {
+            const link = parts.find((p) => p.itemId === line.itemId)!
+            return sum + (link.unitPrice ?? 0) * line.shortage
+          }, 0),
+          2
+        )
+      : null
+
+    const recentReceipts = query<{
+      id: string
+      moved_at: number
+      code: string
+      name: string
+      qty: number
+      unit: string
+      reference_no: string | null
+    }>(
+      `SELECT m.id, m.moved_at, i.code, i.name, m.qty, i.unit, m.reference_no
+         FROM stock_moves m
+         JOIN items i             ON i.id = m.item_id
+         JOIN item_suppliers isup ON isup.item_id = i.id AND isup.supplier_id = ?
+        WHERE m.direction = 'in' AND m.reason = 'purchase' AND m.voided_at IS NULL
+        ORDER BY m.moved_at DESC
+        LIMIT 15`,
+      [id]
+    ).map((r) => ({
+      id: r.id,
+      movedAt: r.moved_at,
+      code: r.code,
+      name: r.name,
+      qty: round(r.qty),
+      unit: r.unit,
+      referenceNo: r.reference_no
+    }))
+
+    return {
+      supplier,
+      parts,
+      preferredCount: parts.filter((p) => p.isPreferredSource).length,
+      belowReorderCount: parts.filter((p) => p.belowReorder).length,
+      outstanding,
+      outstandingValue,
+      recentReceipts
+    }
   },
 
   /**

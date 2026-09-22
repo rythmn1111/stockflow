@@ -1,15 +1,7 @@
 import { useEffect, useRef } from 'react'
-import {
-  ArrowDownUpIcon,
-  BoxesIcon,
-  DownloadIcon,
-  MapPinIcon,
-  PencilIcon,
-  PlusIcon,
-  SearchIcon,
-  XIcon
-} from 'lucide-react'
+import { ArrowDownUpIcon, BoxesIcon, DownloadIcon, MapPinIcon, PencilIcon, SearchIcon, XIcon } from 'lucide-react'
 import type { ItemType } from '@shared/types'
+import { ITEM_TYPES } from '@shared/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -18,7 +10,7 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { ItemCode, ItemTypeBadge, StockCell } from '@/components/stock-bits'
+import { ItemCode, ItemThumb, ItemTypeBadge, StockCell } from '@/components/stock-bits'
 import { ItemDetailSheet } from '@/features/item-detail-sheet'
 import { useItemLocations, useItems, useSuppliers } from '@/hooks/use-data'
 import { useUiStore } from '@/store/ui'
@@ -40,7 +32,8 @@ const SORTS = [
   { value: 'stock_asc', label: 'Least stock' },
   { value: 'stock_desc', label: 'Most stock' },
   { value: 'shortfall', label: 'Furthest below reorder' },
-  { value: 'recent', label: 'Recently changed' }
+  { value: 'recent', label: 'Recently changed' },
+  { value: 'location', label: 'Shelf order' }
 ] as const
 
 /**
@@ -88,13 +81,16 @@ export function ItemsPage(): React.JSX.Element {
           value={itemFilters.type ?? 'all'}
           onValueChange={(value) => setItemFilters({ type: value as ItemType | 'all' })}
         >
-          <SelectTrigger className="h-8 w-28">
+          <SelectTrigger className="h-8 w-36">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">RM &amp; FG</SelectItem>
-            <SelectItem value="RM">Raw material</SelectItem>
-            <SelectItem value="FG">Finished good</SelectItem>
+            <SelectItem value="all">All types</SelectItem>
+            {ITEM_TYPES.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
 
@@ -168,16 +164,15 @@ export function ItemsPage(): React.JSX.Element {
           </Button>
         )}
 
-        <div className="ml-auto flex items-center gap-2">
-          <Button variant="outline" size="sm" className="h-8 gap-1.5" onClick={() => void window.api.items.exportCsv()}>
-            <DownloadIcon className="size-3.5" />
-            Export
-          </Button>
-          <Button size="sm" className="h-8 gap-1.5" onClick={() => openItemForm()}>
-            <PlusIcon className="size-3.5" />
-            New item
-          </Button>
-        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          className="ml-auto h-8 gap-1.5"
+          onClick={() => void window.api.items.exportCsv()}
+        >
+          <DownloadIcon className="size-3.5" />
+          Export
+        </Button>
       </div>
 
       <div className="flex items-center justify-between px-4 py-1.5 text-xs text-muted-foreground">
@@ -223,13 +218,14 @@ export function ItemsPage(): React.JSX.Element {
           <Table className={cn(isPlaceholderData && 'opacity-60')}>
             <TableHeader>
               <TableRow>
+                <TableHead className="w-10" />
                 <TableHead className="w-28">Code</TableHead>
                 <TableHead>Name</TableHead>
                 <TableHead className="w-14">Type</TableHead>
                 <TableHead className="w-36 text-right">Stock</TableHead>
                 <TableHead className="w-20 text-right">Reorder</TableHead>
-                <TableHead className="w-24">Location</TableHead>
-                <TableHead className="w-32">Supplier</TableHead>
+                <TableHead className="w-28">Location</TableHead>
+                <TableHead className="w-36">Supplier</TableHead>
                 <TableHead className="w-24 text-right">Net wt.</TableHead>
                 <TableHead className="w-16 text-right">Per box</TableHead>
                 <TableHead className="w-10" />
@@ -242,6 +238,9 @@ export function ItemsPage(): React.JSX.Element {
                   className="cursor-pointer"
                   onClick={() => setOpenItem(item.id)}
                 >
+                  <TableCell>
+                    <ItemThumb src={item.photoThumb} alt={item.code} />
+                  </TableCell>
                   <TableCell>
                     <ItemCode code={item.code} />
                   </TableCell>
@@ -270,17 +269,36 @@ export function ItemsPage(): React.JSX.Element {
                     {item.reorderLevel > 0 ? formatQty(item.reorderLevel) : '—'}
                   </TableCell>
                   <TableCell className="text-xs">
-                    {item.location ? (
+                    {item.location || item.rack ? (
                       <span className="inline-flex items-center gap-1 text-muted-foreground">
-                        <MapPinIcon className="size-3" />
-                        {item.location}
+                        <MapPinIcon className="size-3 shrink-0" />
+                        <span className="truncate">{[item.location, item.rack].filter(Boolean).join(' / ')}</span>
                       </span>
                     ) : (
                       <span className="text-muted-foreground/50">—</span>
                     )}
                   </TableCell>
-                  <TableCell className="max-w-32 truncate text-xs text-muted-foreground">
-                    {item.supplierName ?? '—'}
+                  <TableCell className="text-xs text-muted-foreground">
+                    {item.supplierName ? (
+                      <span className="flex items-center gap-1.5">
+                        <span className="truncate">{item.supplierName}</span>
+                        {item.supplierCount > 1 && (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Badge variant="muted" className="h-4 shrink-0 px-1 text-[10px]">
+                                +{item.supplierCount - 1}
+                              </Badge>
+                            </TooltipTrigger>
+                            <TooltipContent className="text-xs">
+                              {item.supplierCount - 1} alternative source
+                              {item.supplierCount === 2 ? '' : 's'} recorded
+                            </TooltipContent>
+                          </Tooltip>
+                        )}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground/50">none</span>
+                    )}
                   </TableCell>
                   <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
                     {formatWeight(item.netWeight)}

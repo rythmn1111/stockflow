@@ -255,14 +255,16 @@ export const plansRepo = {
       due_date: number | null
     }>(
       `SELECT pl.rm_item_id AS item_id, rm.code, rm.name, rm.unit, pl.shortage,
-              rm.supplier_id, s.name AS supplier_name, s.contact AS supplier_contact,
-              s.phone AS supplier_phone, s.lead_time_days,
+              rmsup.supplier_id, s.name AS supplier_name, s.contact AS supplier_contact,
+              s.phone AS supplier_phone,
+              COALESCE(rmsup.lead_time_days, s.lead_time_days) AS lead_time_days,
               o.id AS order_id, o.order_no, o.due_date
          FROM plan_lines pl
          JOIN plans p          ON p.id = pl.plan_id AND p.superseded_at IS NULL
          JOIN orders o         ON o.id = p.order_id
          JOIN items rm         ON rm.id = pl.rm_item_id
-         LEFT JOIN suppliers s ON s.id = rm.supplier_id
+         LEFT JOIN item_suppliers rmsup ON rmsup.item_id = rm.id AND rmsup.is_preferred = 1
+         LEFT JOIN suppliers s          ON s.id = rmsup.supplier_id
         WHERE o.status IN ('draft','planned','in_production')
           AND pl.shortage > 0
         ORDER BY s.name COLLATE NOCASE ASC, rm.code COLLATE NOCASE ASC`
