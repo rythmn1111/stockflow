@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import { AlertTriangleIcon, PackageIcon } from 'lucide-react'
-import type { OrderStatus } from '@shared/types'
 import { ORDERABLE_TYPES } from '@shared/types'
 import type { OrderInput } from '@shared/api'
 import { Button } from '@/components/ui/button'
@@ -33,7 +32,6 @@ export function OrderFormDialog(): React.JSX.Element {
   const [qtyOrdered, setQtyOrdered] = useState('')
   const [customer, setCustomer] = useState('')
   const [dueDate, setDueDate] = useState('')
-  const [status, setStatus] = useState<OrderStatus>('draft')
   const [notes, setNotes] = useState('')
 
   const editing = !!orderFormId
@@ -47,7 +45,6 @@ export function OrderFormDialog(): React.JSX.Element {
       setQtyOrdered(String(existing.qtyOrdered))
       setCustomer(existing.customer ?? '')
       setDueDate(toDateInput(existing.dueDate))
-      setStatus(existing.status)
       setNotes(existing.notes ?? '')
     } else if (!editing) {
       setOrderNo('')
@@ -56,7 +53,6 @@ export function OrderFormDialog(): React.JSX.Element {
       setQtyOrdered('')
       setCustomer('')
       setDueDate('')
-      setStatus('draft')
       setNotes('')
     }
   }, [orderFormOpen, editing, existing])
@@ -75,7 +71,6 @@ export function OrderFormDialog(): React.JSX.Element {
     orderDate: fromDateInput(orderDate) ?? Date.now(),
     fgItemId,
     qtyOrdered: quantity,
-    status,
     customer: customer.trim() || null,
     dueDate: fromDateInput(dueDate),
     notes: notes.trim() || null
@@ -159,7 +154,7 @@ export function OrderFormDialog(): React.JSX.Element {
             )}
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor="qty">Quantity{fg ? ` (${fg.unit})` : ''}</Label>
               <Input
@@ -173,21 +168,6 @@ export function OrderFormDialog(): React.JSX.Element {
             <div className="space-y-1.5">
               <Label htmlFor="due">Due date</Label>
               <Input id="due" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Status</Label>
-              <Select value={status} onValueChange={(value) => setStatus(value as OrderStatus)}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="draft">Draft</SelectItem>
-                  <SelectItem value="planned">Planned</SelectItem>
-                  <SelectItem value="in_production">In production</SelectItem>
-                  <SelectItem value="completed">Completed</SelectItem>
-                  <SelectItem value="cancelled">Cancelled</SelectItem>
-                </SelectContent>
-              </Select>
             </div>
           </div>
 

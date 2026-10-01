@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import {
   AlertTriangleIcon,
+  BanIcon,
   CheckCircle2Icon,
   DownloadIcon,
   FactoryIcon,
@@ -24,7 +25,6 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { BoxCount, ItemCode, OrderStatusBadge, ShortageCell } from '@/components/stock-bits'
 import { qk } from '@/lib/query-keys'
 import { formatDate, formatDateTime, formatQty, formatWeight, pluralise } from '@/lib/format'
@@ -184,18 +184,20 @@ export function OrderDetailSheet({
                   Edit
                 </Button>
 
-                <Select value={order.status} onValueChange={(value) => setStatus.mutate({ id: order.id, status: value as OrderStatus })}>
-                  <SelectTrigger className="h-8 w-36">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="draft">Draft</SelectItem>
-                    <SelectItem value="planned">Planned</SelectItem>
-                    <SelectItem value="in_production">In production</SelectItem>
-                    <SelectItem value="completed">Completed</SelectItem>
-                    <SelectItem value="cancelled">Cancelled</SelectItem>
-                  </SelectContent>
-                </Select>
+                {/* Cancelling is the one status change that is a real decision rather
+                    than a consequence, and it is what releases the stock this order
+                    holds — so it stays as an explicit action. */}
+                {order.status !== 'cancelled' && order.status !== 'completed' && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="gap-1.5 text-muted-foreground hover:text-destructive"
+                    onClick={() => setStatus.mutate({ id: order.id, status: 'cancelled' })}
+                  >
+                    <BanIcon className="size-3.5" />
+                    Cancel order
+                  </Button>
+                )}
               </div>
 
               {/* --- packing and weight, from the item's own fields --- */}
